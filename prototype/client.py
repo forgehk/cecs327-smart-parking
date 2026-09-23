@@ -9,6 +9,10 @@ Driver client.
 
 Reservations are leases: they expire on their own after a while, so a client
 that dies still can't hold a space forever.
+
+Every request has a req_id. If we don't get a reply in time we send the same
+request again with the same id, so the server can recognise the retry.
+--simulate-lost-reply throws away the first reply on purpose to show this.
 """
 
 import argparse
@@ -21,14 +25,18 @@ from common import (CLIENT_RETRIES, CLIENT_TIMEOUT, LOT_PORTS, MessageLog, now,
                     read_lines, send_json, ts_str)
 
 
-def request(host, port, msg, log):
-    """Send one request and wait for the reply. Retries on timeout."""
+def request(host, port, msg, log, simulate_lost_reply=False):
+    """Send one request and wait for the reply. Retries on timeout with the same req_id."""
     peer = "%s:%d" % (host, port)
     for attempt in range(1, CLIENT_RETRIES + 1):
         try:
             with socket.create_connection((host, port), timeout=CLIENT_TIMEOUT) as s:
                 log.record("send", peer, msg)
                 send_json(s, msg)
+                if simulate_lost_reply and attempt == 1:
+                    print("[%s] [client] (demo) pretending reply to %s got lost, retrying with same req_id"
+                          % (ts_str(now()), msg["req_id"]))
+                    continue
                 for reply in read_lines(s):
                     log.record("recv", peer, reply)
                     return reply
@@ -48,6 +56,7 @@ def main():
     ap.add_argument("--lot", default="A")
     ap.add_argument("--server", help="host:port override")
     ap.add_argument("--json", action="store_true", help="print the raw reply")
+    ap.add_argument("--simulate-lost-reply", action="store_true")
     ap.add_argument("op", choices=["find", "reserve", "release"])
     ap.add_argument("space", nargs="?")
     args = ap.parse_args()
@@ -71,7 +80,7 @@ def main():
 
     print("[%s] [client %s] -> %s %s (req_id %s) to %s:%d"
           % (ts_str(now()), args.id, args.op, args.space or "", msg["req_id"], host, port))
-    reply = request(host, port, msg, log)
+    reply = request(host, port, msg, log, args.simulate_lost_reply)
     if reply is None:
         print("[%s] [client %s] FAILED: no reply" % (ts_str(now()), args.id))
         sys.exit(2)
@@ -79,16 +88,17 @@ def main():
         print(json.dumps(reply, indent=2))
         return
 
+    dup = " (duplicate - cached reply)" if reply.get("duplicate") else ""
     if args.op == "find":
         s = reply["lot_summary"]
-        print("[%s] [client %s] <- OK Lot %s: %d free, %d occupied, %d reserved, %d unknown"
+        print("[%s] [client %s] <- OK Lot %s: %d free, %d occupied, %d reserved, %d unknown%s"
               % (ts_str(now()), args.id, reply["lot"], s["free"], s["occupied"],
-                 s["reserved"], s["unknown"]))
+                 s["reserved"], s["unknown"], dup))
         print("   free spaces:", ", ".join(sp["id"] for sp in reply["free"]) or "(none)")
     else:
         extra = " (lease %.0fs)" % reply["lease"] if reply.get("lease") else ""
-        print("[%s] [client %s] <- %s %s%s"
-              % (ts_str(now()), args.id, reply["status"], reply.get("reason", ""), extra))
+        print("[%s] [client %s] <- %s %s%s%s"
+              % (ts_str(now()), args.id, reply["status"], reply.get("reason", ""), extra, dup))
     sys.exit(0 if reply["status"] == "OK" else 1)
 
 

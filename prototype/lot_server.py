@@ -63,6 +63,9 @@ class LotServer:
             sid = "%s-%02d" % (lot, i)
             self.spaces[sid] = Space(sid)
         self.pool = ThreadPoolExecutor(max_workers=workers)
+        # replies we already sent, keyed by req_id. If the client's reply got
+        # lost and it retries, we answer the same thing instead of doing it twice.
+        self.seen_requests = {}
 
     def info(self, text):
         print("[%s] [%s] %s" % (ts_str(now()), self.name, text), flush=True)
@@ -87,8 +90,16 @@ class LotServer:
     # ---- client messages ----
 
     def handle_client(self, msg, conn, peer):
+        req_id = msg.get("req_id")
         with self.lock:
-            reply = self.process_client(msg)
+            if req_id in self.seen_requests:
+                reply = dict(self.seen_requests[req_id])
+                reply["duplicate"] = True
+                self.info("DUPLICATE req %s -> resending cached reply" % req_id)
+            else:
+                reply = self.process_client(msg)
+                if req_id:
+                    self.seen_requests[req_id] = reply
         self.log.record("send", peer, reply)
         send_json(conn, reply)
 
