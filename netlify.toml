@@ -1,0 +1,8 @@
+[build]
+  publish = "web"
+  command = ""
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cache-Control = "no-cache"
