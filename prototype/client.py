@@ -95,6 +95,12 @@ def main():
               % (ts_str(now()), args.id, reply["lot"], s["free"], s["occupied"],
                  s["reserved"], s["unknown"], dup))
         print("   free spaces:", ", ".join(sp["id"] for sp in reply["free"]) or "(none)")
+        for lot, v in reply.get("other_lots", {}).items():
+            if v["free"] is None:
+                print("   Lot %s: no summary yet (peer unreachable)" % lot)
+            else:
+                print("   Lot %s: %d free, %d unknown - %.1fs old%s"
+                      % (lot, v["free"], v["unknown"], v["age"], " [STALE]" if v["stale"] else ""))
     else:
         extra = " (lease %.0fs)" % reply["lease"] if reply.get("lease") else ""
         print("[%s] [client %s] <- %s %s%s%s"

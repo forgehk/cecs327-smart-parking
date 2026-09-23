@@ -7,6 +7,11 @@ Lot server - one process per parking lot.
 
 Holds the state of every space in its lot, takes updates from the lot's sensor
 node and answers client queries. Everything comes in on one TCP port as JSON lines.
+
+The two lot servers are also peers: every few seconds each one sends the other a
+summary of its lot ("7 free, 2 unknown"), so a client talking to lot A can be told
+that lot B has room. The summary is only a hint - lot B's server is still the
+only one that can reserve a space in B.
 """
 
 import argparse
@@ -16,8 +21,9 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from common import (LOT_PORTS, RESERVATION_LEASE, STALENESS_DELTA, MessageLog, now,
-                    peer_name, read_lines, send_json, ts_str)
+from common import (LOT_PORTS, PEER_STALE_AFTER, PEER_SUMMARY_INTERVAL, RESERVATION_LEASE,
+                    STALENESS_DELTA, MessageLog, now, peer_name, read_lines, send_json,
+                    ts_str)
 
 
 class Space:
@@ -52,9 +58,12 @@ class Space:
 
 
 class LotServer:
-    def __init__(self, lot, port, n_spaces, workers):
+    def __init__(self, lot, port, peers, n_spaces, workers):
         self.lot = lot
         self.port = port
+        self.peers = peers                  # {"B": ("127.0.0.1", 5002)}
+        self.peer_summaries = {}            # lot -> (summary msg, time received)
+        self.stopping = False
         self.name = "lot_server_" + lot
         self.log = MessageLog(self.name)
         self.lock = threading.Lock()
@@ -123,6 +132,7 @@ class LotServer:
             reply["status"] = "OK"
             reply["free"] = free
             reply["lot_summary"] = self.summary(t)
+            reply["other_lots"] = self.peer_view(t)
             self.info("FIND from %s: %d free" % (client, len(free)))
             return reply
 
@@ -164,6 +174,56 @@ class LotServer:
             reply["status"] = "DENIED"
             reply["reason"] = "unknown op %s" % op
         return reply
+
+    # ---- peer messages ----
+
+    def handle_peer(self, msg, conn, peer):
+        with self.lock:
+            self.peer_summaries[msg["lot"]] = (msg, now())
+        ack = {"type": "summary_ack", "lot": self.lot, "ts": round(now(), 3)}
+        self.log.record("send", peer, ack)
+        try:
+            send_json(conn, ack)
+        except OSError:
+            pass
+
+    def peer_view(self, t=None):
+        """What we currently believe about the other lots, with how old it is."""
+        t = t or now()
+        out = {}
+        for lot, (summ, received) in self.peer_summaries.items():
+            age = round(t - received, 1)
+            out[lot] = {
+                "free": summ["free"],
+                "unknown": summ["unknown"],
+                "age": age,
+                "stale": age > PEER_STALE_AFTER,
+            }
+        for lot in self.peers:
+            if lot not in out:
+                out[lot] = {"free": None, "unknown": None, "age": None, "stale": True}
+        return out
+
+    def peer_gossip_loop(self):
+        """Background thread: send our summary to every peer every few seconds."""
+        while not self.stopping:
+            time.sleep(PEER_SUMMARY_INTERVAL)
+            with self.lock:
+                summ = self.summary()
+            msg = {"type": "summary", "lot": self.lot, "ts": round(now(), 3)}
+            msg.update(summ)
+            for lot, (host, port) in self.peers.items():
+                target = "%s:%d" % (host, port)
+                try:
+                    with socket.create_connection((host, port), timeout=1.0) as s:
+                        self.log.record("send", target, msg)
+                        send_json(s, msg)
+                        s.settimeout(1.0)
+                        for ack in read_lines(s):
+                            self.log.record("recv", target, ack)
+                            break
+                except OSError:
+                    self.info("PEER %s unreachable, still serving own lot" % lot)
 
     def summary(self, t=None):
         t = t or now()
@@ -211,6 +271,8 @@ class LotServer:
                     self.handle_sensor(msg)
                 elif t in ("find", "reserve", "release"):
                     self.handle_client(msg, conn, peer)
+                elif t == "summary":
+                    self.handle_peer(msg, conn, peer)
                 else:
                     self.info("ignored message type %r from %s" % (t, peer))
         except (ConnectionResetError, BrokenPipeError, OSError):
@@ -224,8 +286,9 @@ class LotServer:
         srv.bind(("0.0.0.0", self.port))
         srv.listen(64)
         threading.Thread(target=self.monitor_loop, daemon=True).start()
-        self.info("listening on :%d, delta=%.0fs, lease=%.0fs, log=%s"
-                  % (self.port, STALENESS_DELTA, RESERVATION_LEASE, self.log.path))
+        threading.Thread(target=self.peer_gossip_loop, daemon=True).start()
+        self.info("listening on :%d, peers=%s, delta=%.0fs, lease=%.0fs, log=%s"
+                  % (self.port, list(self.peers), STALENESS_DELTA, RESERVATION_LEASE, self.log.path))
         self.info(self.summary_text())
         try:
             while True:
@@ -234,6 +297,7 @@ class LotServer:
         except KeyboardInterrupt:
             self.info("shutting down")
         finally:
+            self.stopping = True
             srv.close()
 
 
@@ -241,6 +305,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lot", required=True)
     ap.add_argument("--port", type=int)
+    ap.add_argument("--peer", action="append", default=[],
+                    help="LOT=HOST:PORT, can repeat. Default: every other lot in LOT_PORTS")
     ap.add_argument("--spaces", type=int, default=20)
     ap.add_argument("--workers", type=int, default=8)
     args = ap.parse_args()
@@ -248,7 +314,19 @@ def main():
     port = args.port or LOT_PORTS.get(args.lot)
     if port is None:
         sys.exit("unknown lot %s, use --port" % args.lot)
-    LotServer(args.lot, port, args.spaces, args.workers).run()
+
+    peers = {}
+    if args.peer:
+        for p in args.peer:
+            lot, hostport = p.split("=")
+            host, pport = hostport.split(":")
+            peers[lot] = (host, int(pport))
+    else:
+        for lot, pt in LOT_PORTS.items():
+            if lot != args.lot:
+                peers[lot] = ("127.0.0.1", pt)
+
+    LotServer(args.lot, port, peers, args.spaces, args.workers).run()
 
 
 if __name__ == "__main__":
