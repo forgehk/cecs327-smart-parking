@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Distributed Smart Parking - CECS 327</title>
+  <meta name="description" content="Milestone 1 prototype: sensor nodes, two lot servers and a driver client running as separate processes that only communicate by messages.">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>Distributed Smart Parking - live prototype</h1>
+    <div class="sub">
+      CECS 327 · Milestone 1 · Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda ·
+      each box below is a separate process (Web Worker) with its own memory; they only communicate by messages.
+    </div>
+  </div>
+  <div class="pills" id="pills"></div>
+</header>
+
+<main>
+
+  <!-- architecture diagram, drawn by diagram.js -->
+  <section class="card">
+    <h2>Architecture <span class="r" id="msgcount">0 msgs</span></h2>
+    <svg id="diagram" viewBox="0 0 560 340" role="img"
+         aria-label="Two sensor nodes push to two lot servers, which exchange summaries as peers; the client talks to either lot server."></svg>
+    <div class="hint">
+      Dots are messages in flight:
+      <span style="color:#86efac">sensor</span> ·
+      <span style="color:#93c5fd">client</span> ·
+      <span style="color:#fcd34d">peer</span>.
+      Each lot server appends every message to its own log and replays it when restarted.
+    </div>
+  </section>
+
+  <!-- lot maps, filled by ui.js -->
+  <section class="card" id="lotA"></section>
+  <section class="card" id="lotB"></section>
+
+  <section class="card">
+    <h2>Fault injection</h2>
+    <div class="hint" style="margin-bottom:6px">Processes (kill = crash; restarting a lot server recovers from its log)</div>
+    <div class="procs" id="procs"></div>
+
+    <div class="hint" style="margin:10px 0 4px">Links (to the receiver a cut link and a dead process look the same: silence)</div>
+    <div class="links" id="links"></div>
+
+    <div class="row" style="margin-top:10px">
+      <label class="sl">latency
+        <input type="range" id="latency" min="0" max="1500" step="50" value="250">
+        <span id="latencyv">250 ms</span>
+      </label>
+      <label class="sl">network drop
+        <input type="range" id="drop" min="0" max="0.6" step="0.05" value="0">
+        <span id="dropv">0%</span>
+      </label>
+    </div>
+    <div class="row">
+      <label class="sl">sensor omission (dropped events)
+        <input type="range" id="omit" min="0" max="0.8" step="0.1" value="0">
+        <span id="omitv">0%</span>
+      </label>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Client (driver app)</h2>
+    <div class="row">
+      <label class="sl">driver
+        <select id="who">
+          <option>alice</option>
+          <option>bob</option>
+          <option>carol</option>
+        </select>
+      </label>
+      <label class="sl">space
+        <input type="text" id="space" placeholder="click a tile, e.g. A-03" style="width:150px">
+      </label>
+    </div>
+    <div class="row">
+      <button class="primary" id="btnFindA">find (Lot A)</button>
+      <button class="primary" id="btnFindB">find (Lot B)</button>
+      <button class="ok" id="btnReserve">reserve</button>
+      <button id="btnRelease">release</button>
+      <button id="btnLost" title="Sends the request, ignores the first reply, then retries with the same req_id">reserve · simulate lost reply</button>
+    </div>
+    <div class="row">
+      <button id="btnCar" title="Tell the sensor node a car arrived at / left the selected space">car arrives / leaves at space</button>
+    </div>
+    <div class="reply" id="reply">-</div>
+    <div class="hint" style="margin-top:6px">
+      Every request carries a <kbd>req_id</kbd>. The client waits 2 s and retries up to 3 times with the same id;
+      the server caches replies by req_id, so a retry can never create a second reservation.
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Demo script</h2>
+    <div class="scen" id="scen"></div>
+    <div class="narr" id="narr"><div>Pick a scenario. Each one drives the system and explains what to watch.</div></div>
+  </section>
+
+  <section class="card span3">
+    <h2>Message log
+      <span class="r"><label class="sl" style="display:inline-flex"><input type="checkbox" id="autoscroll" checked> auto-scroll</label></span>
+    </h2>
+    <div class="row" style="justify-content:space-between">
+      <div class="chips" id="chips"></div>
+      <div class="row" style="margin:0">
+        <button id="btnDownload">download all logs (.jsonl)</button>
+        <button id="btnClear">clear view</button>
+      </div>
+    </div>
+    <div class="logwrap" id="logwrap">
+      <table>
+        <thead><tr><th>time</th><th>from → to</th><th>type</th><th>detail</th></tr></thead>
+        <tbody id="log"></tbody>
+      </table>
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  heartbeat 2 s · staleness Δ = 3 × heartbeat = 6 s · peer summary every 3 s (stale after 9 s) ·
+  reservation lease 30 s · client timeout 2 s × 3 retries.
+  The Python version in <code>prototype/</code> uses the same protocol over TCP sockets.
+</footer>
+
+<script src="js/config.js"></script>
+<script src="js/network.js"></script>
+<script src="js/ui.js"></script>
+<script src="js/diagram.js"></script>
+<script src="js/scenarios.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>
