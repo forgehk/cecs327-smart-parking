@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 560" width="900" height="560" font-family="Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#334155"/></marker>
+    <marker id="arrb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#1d4ed8"/></marker>
+  </defs>
+  <rect width="900" height="560" fill="#ffffff"/>
+  <text x="450" y="34" text-anchor="middle" font-size="20" font-weight="700" fill="#0f172a">Distributed Smart Parking — Architecture (Milestone 1)</text>
+  <text x="450" y="54" text-anchor="middle" font-size="12" fill="#475569">Federated organization: each lot server is the sole authority for its lot · no global coordinator · processes share nothing but messages</text>
+
+  <!-- Lot A region -->
+  <rect x="40" y="80" width="360" height="330" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="6 4"/>
+  <text x="60" y="104" font-size="13" font-weight="700" fill="#475569">LOT A  (20 spaces)</text>
+  <!-- Lot B region -->
+  <rect x="500" y="80" width="360" height="330" rx="14" fill="#f8fafc" stroke="#cbd5e1" stroke-dasharray="6 4"/>
+  <text x="520" y="104" font-size="13" font-weight="700" fill="#475569">LOT B  (20 spaces)</text>
+
+  <!-- Sensor nodes -->
+  <g>
+    <rect x="120" y="120" width="200" height="72" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+    <text x="220" y="145" text-anchor="middle" font-size="14" font-weight="700" fill="#064e3b">Sensor node A</text>
+    <text x="220" y="163" text-anchor="middle" font-size="11" fill="#065f46">sensor_node.py --lot A</text>
+    <text x="220" y="180" text-anchor="middle" font-size="10.5" fill="#047857">in-memory only · crash / omission</text>
+  </g>
+  <g>
+    <rect x="580" y="120" width="200" height="72" rx="10" fill="#ecfdf5" stroke="#059669" stroke-width="1.5"/>
+    <text x="680" y="145" text-anchor="middle" font-size="14" font-weight="700" fill="#064e3b">Sensor node B</text>
+    <text x="680" y="163" text-anchor="middle" font-size="11" fill="#065f46">sensor_node.py --lot B</text>
+    <text x="680" y="180" text-anchor="middle" font-size="10.5" fill="#047857">in-memory only · crash / omission</text>
+  </g>
+
+  <!-- Lot servers -->
+  <g>
+    <rect x="120" y="262" width="200" height="96" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.8"/>
+    <text x="220" y="286" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">Lot server A</text>
+    <text x="220" y="304" text-anchor="middle" font-size="11" fill="#1e40af">lot_server.py --lot A  · TCP :5001</text>
+    <text x="220" y="321" text-anchor="middle" font-size="10.5" fill="#1d4ed8">single writer for A-01…A-20 · thread pool</text>
+    <text x="220" y="338" text-anchor="middle" font-size="10.5" fill="#1d4ed8">server to sensor + clients · peer to B</text>
+    <!-- disk -->
+    <rect x="120" y="372" width="200" height="26" rx="4" fill="#fff7ed" stroke="#ea580c"/>
+    <text x="220" y="389" text-anchor="middle" font-size="10" fill="#9a3412">logs/lot_server_A.log (append-only)</text>
+    <line x1="220" y1="358" x2="220" y2="372" stroke="#ea580c" stroke-width="1.5"/>
+  </g>
+  <g>
+    <rect x="580" y="262" width="200" height="96" rx="10" fill="#eff6ff" stroke="#1d4ed8" stroke-width="1.8"/>
+    <text x="680" y="286" text-anchor="middle" font-size="14" font-weight="700" fill="#1e3a8a">Lot server B</text>
+    <text x="680" y="304" text-anchor="middle" font-size="11" fill="#1e40af">lot_server.py --lot B  · TCP :5002</text>
+    <text x="680" y="321" text-anchor="middle" font-size="10.5" fill="#1d4ed8">single writer for B-01…B-20 · thread pool</text>
+    <text x="680" y="338" text-anchor="middle" font-size="10.5" fill="#1d4ed8">server to sensor + clients · peer to A</text>
+    <rect x="580" y="372" width="200" height="26" rx="4" fill="#fff7ed" stroke="#ea580c"/>
+    <text x="680" y="389" text-anchor="middle" font-size="10" fill="#9a3412">logs/lot_server_B.log (append-only)</text>
+    <line x1="680" y1="358" x2="680" y2="372" stroke="#ea580c" stroke-width="1.5"/>
+  </g>
+
+  <!-- sensor -> server (asynchronous, one-way) -->
+  <line x1="220" y1="192" x2="220" y2="260" stroke="#334155" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="230" y="222" font-size="10.5" fill="#334155">event / heartbeat (2 s)</text>
+  <text x="230" y="236" font-size="10" fill="#64748b">asynchronous · push only</text>
+  <line x1="680" y1="192" x2="680" y2="260" stroke="#334155" stroke-width="1.6" marker-end="url(#arr)"/>
+  <text x="690" y="222" font-size="10.5" fill="#334155">event / heartbeat (2 s)</text>
+  <text x="690" y="236" font-size="10" fill="#64748b">asynchronous · push only</text>
+
+  <!-- peer link -->
+  <line x1="322" y1="310" x2="578" y2="310" stroke="#1d4ed8" stroke-width="1.8" marker-start="url(#arrb)" marker-end="url(#arrb)"/>
+  <rect x="368" y="286" width="164" height="16" rx="3" fill="#fff"/>
+  <text x="450" y="298" text-anchor="middle" font-size="10.5" fill="#1d4ed8" font-weight="700">lot summaries every 3 s (peers)</text>
+  <rect x="392" y="318" width="116" height="14" rx="3" fill="#fff"/><text x="450" y="329" text-anchor="middle" font-size="10" fill="#64748b">semi-sync · stale after 9 s</text>
+
+  <!-- client -->
+  <g>
+    <rect x="330" y="450" width="240" height="70" rx="10" fill="#fefce8" stroke="#ca8a04" stroke-width="1.5"/>
+    <text x="450" y="474" text-anchor="middle" font-size="14" font-weight="700" fill="#713f12">Client (driver app)</text>
+    <text x="450" y="492" text-anchor="middle" font-size="11" fill="#854d0e">client.py find | reserve | release</text>
+    <text x="450" y="509" text-anchor="middle" font-size="10" fill="#a16207">crash-stop · no authoritative state · req_id retries</text>
+  </g>
+  <line x1="380" y1="450" x2="250" y2="360" stroke="#334155" stroke-width="1.6" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="322" y="392" font-size="10.5" fill="#334155">request / reply</text>
+  <text x="322" y="405" font-size="10" fill="#64748b">semi-sync · 2 s timeout</text>
+  <line x1="520" y1="450" x2="650" y2="360" stroke="#334155" stroke-width="1.6" marker-start="url(#arr)" marker-end="url(#arr)"/>
+  <text x="578" y="392" text-anchor="end" font-size="10.5" fill="#334155">request / reply</text>
+  <text x="578" y="405" text-anchor="end" font-size="10" fill="#64748b">semi-sync · 2 s timeout</text>
+
+  <!-- legend -->
+  <g font-size="10.5" fill="#334155">
+    <rect x="40" y="470" width="12" height="12" rx="2" fill="#ecfdf5" stroke="#059669"/><text x="58" y="480">sensor node = client of its lot server</text>
+    <rect x="40" y="490" width="12" height="12" rx="2" fill="#eff6ff" stroke="#1d4ed8"/><text x="58" y="500">lot server = server to clients, peer to other lot</text>
+    <rect x="40" y="510" width="12" height="12" rx="2" fill="#fff7ed" stroke="#ea580c"/><text x="58" y="520">JSON-lines log, replayed on restart (recovery)</text>
+    <text x="40" y="545" fill="#64748b">Space states: free · occupied · reserved (lease 30 s) · unknown (no report within Δ = 6 s). Silence never produces free.</text>
+  </g>
+</svg>
