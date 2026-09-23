@@ -12,9 +12,13 @@ The two lot servers are also peers: every few seconds each one sends the other a
 summary of its lot ("7 free, 2 unknown"), so a client talking to lot A can be told
 that lot B has room. The summary is only a hint - lot B's server is still the
 only one that can reserve a space in B.
+
+Because every message is written to the log before/after it is handled, the
+server can rebuild its table from the log when it is restarted after a crash.
 """
 
 import argparse
+import os
 import socket
 import sys
 import threading
@@ -75,26 +79,62 @@ class LotServer:
         # replies we already sent, keyed by req_id. If the client's reply got
         # lost and it retries, we answer the same thing instead of doing it twice.
         self.seen_requests = {}
+        self.last_sensor_seq = -1
 
     def info(self, text):
         print("[%s] [%s] %s" % (ts_str(now()), self.name, text), flush=True)
+
+    # ---- crash recovery ----
+
+    def apply_sensor(self, msg, t):
+        if msg["type"] == "heartbeat":
+            for sid, state in msg.get("spaces", {}).items():
+                if sid in self.spaces:
+                    self.spaces[sid].sensor_state = state
+                    self.spaces[sid].sensor_ts = t
+        elif msg["type"] == "event":
+            sp = self.spaces.get(msg.get("space"))
+            if sp:
+                sp.sensor_state = msg["state"]
+                sp.sensor_ts = t
+
+    def replay_log(self):
+        """Go through our own log and redo everything that changed state:
+        sensor reports we received and reservations/releases we said OK to."""
+        n = 0
+        for entry in self.log.replay():
+            msg = entry.get("msg", {})
+            t = entry.get("ts", 0)
+            if entry["dir"] == "recv" and msg.get("type") in ("heartbeat", "event"):
+                self.apply_sensor(msg, t)
+                n += 1
+            elif entry["dir"] == "send" and msg.get("type") == "reply" and msg.get("status") == "OK":
+                sp = self.spaces.get(msg.get("space"))
+                if sp and msg.get("op") == "reserve":
+                    sp.reserved_by = msg.get("client")
+                    sp.lease_end = t + RESERVATION_LEASE
+                    n += 1
+                elif sp and msg.get("op") == "release":
+                    sp.reserved_by = None
+                    sp.lease_end = 0.0
+                    n += 1
+        if n:
+            self.info("RECOVERY: replayed %d entries from %s" % (n, self.log.path))
+            self.info("RECOVERY: " + self.summary_text())
 
     # ---- sensor messages ----
 
     def handle_sensor(self, msg):
         with self.lock:
-            t = now()
-            if msg["type"] == "heartbeat":
-                for sid, state in msg.get("spaces", {}).items():
-                    if sid in self.spaces:
-                        self.spaces[sid].sensor_state = state
-                        self.spaces[sid].sensor_ts = t
-            elif msg["type"] == "event":
-                sp = self.spaces.get(msg.get("space"))
-                if sp:
-                    sp.sensor_state = msg["state"]
-                    sp.sensor_ts = t
-                    self.info("EVENT  %s -> %s (seq %s)" % (sp.sid, sp.sensor_state, msg.get("seq")))
+            self.apply_sensor(msg, now())
+            if msg["type"] == "event":
+                self.info("EVENT  %s -> %s (seq %s)" % (msg["space"], msg["state"], msg.get("seq")))
+            # gaps in the sequence numbers = the sensor dropped something.
+            # the next heartbeat carries the full table so it repairs itself.
+            seq = msg.get("seq", -1)
+            if self.last_sensor_seq >= 0 and seq > self.last_sensor_seq + 1:
+                self.info("OMISSION: sensor seq jumped %d -> %d" % (self.last_sensor_seq, seq))
+            self.last_sensor_seq = seq
 
     # ---- client messages ----
 
@@ -281,6 +321,7 @@ class LotServer:
             conn.close()
 
     def run(self):
+        self.replay_log()
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("0.0.0.0", self.port))
@@ -309,6 +350,7 @@ def main():
                     help="LOT=HOST:PORT, can repeat. Default: every other lot in LOT_PORTS")
     ap.add_argument("--spaces", type=int, default=20)
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--fresh", action="store_true", help="delete the old log, start empty")
     args = ap.parse_args()
 
     port = args.port or LOT_PORTS.get(args.lot)
@@ -326,7 +368,13 @@ def main():
             if lot != args.lot:
                 peers[lot] = ("127.0.0.1", pt)
 
-    LotServer(args.lot, port, peers, args.spaces, args.workers).run()
+    server = LotServer(args.lot, port, peers, args.spaces, args.workers)
+    if args.fresh:
+        try:
+            os.remove(server.log.path)
+        except FileNotFoundError:
+            pass
+    server.run()
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@
 Sensor node - simulates the occupancy sensors of one lot.
 
     python sensor_node.py --lot A
+    python sensor_node.py --lot B --drop-rate 0.3    # lose 30% of events (omission failure)
 
 Keeps a fake occupancy table in memory, flips spaces at random, and pushes the
 changes to the lot server. Also sends a heartbeat every HEARTBEAT_INTERVAL with the
@@ -24,6 +25,8 @@ def main():
     ap.add_argument("--spaces", type=int, default=20)
     ap.add_argument("--flip-rate", type=float, default=0.15,
                     help="chance per second that a car arrives or leaves")
+    ap.add_argument("--drop-rate", type=float, default=0.0,
+                    help="chance that an event message is silently dropped")
     ap.add_argument("--seed", type=int)
     args = ap.parse_args()
 
@@ -47,7 +50,7 @@ def main():
     def say(text):
         print("[%s] [%s] %s" % (ts_str(now()), name, text), flush=True)
 
-    say("starting with %d spaces, server %s" % (args.spaces, server))
+    say("starting with %d spaces, server %s, drop rate %.2f" % (args.spaces, server, args.drop_rate))
 
     sock = None
     next_heartbeat = 0.0
@@ -77,9 +80,13 @@ def main():
                 seq += 1
                 msg = {"type": "event", "lot": args.lot, "seq": seq,
                        "ts": round(now(), 3), "space": sid, "state": spaces[sid]}
-                say("event %d: %s -> %s" % (seq, sid, spaces[sid]))
-                log.record("send", server, msg)
-                send_json(sock, msg)
+                if rng.random() < args.drop_rate:
+                    say("DROPPED event %d: %s -> %s" % (seq, sid, spaces[sid]))
+                    log.record("dropped", server, msg)
+                else:
+                    say("event %d: %s -> %s" % (seq, sid, spaces[sid]))
+                    log.record("send", server, msg)
+                    send_json(sock, msg)
 
             time.sleep(1.0)
         except (BrokenPipeError, ConnectionResetError, OSError):
