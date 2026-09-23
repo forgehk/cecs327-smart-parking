@@ -1,0 +1,7 @@
+prototype/logs/
+prototype/run/
+prototype/tests/out/
+__pycache__/
+*.pyc
+.netlify/
+.DS_Store
