@@ -4,6 +4,11 @@ Driver client.
 
     python client.py find
     python client.py --lot B find
+    python client.py --id alice reserve A-03
+    python client.py --id alice release A-03
+
+Reservations are leases: they expire on their own after a while, so a client
+that dies still can't hold a space forever.
 """
 
 import argparse
@@ -43,21 +48,29 @@ def main():
     ap.add_argument("--lot", default="A")
     ap.add_argument("--server", help="host:port override")
     ap.add_argument("--json", action="store_true", help="print the raw reply")
-    ap.add_argument("op", choices=["find"])
+    ap.add_argument("op", choices=["find", "reserve", "release"])
+    ap.add_argument("space", nargs="?")
     args = ap.parse_args()
+
+    if args.op in ("reserve", "release") and not args.space:
+        sys.exit("reserve/release need a space id, e.g. A-03")
 
     if args.server:
         host, port = args.server.split(":")
         port = int(port)
     else:
-        host, port = "127.0.0.1", LOT_PORTS[args.lot]
+        # the space id tells us which lot to talk to
+        lot = args.space.split("-")[0] if args.space else args.lot
+        host, port = "127.0.0.1", LOT_PORTS.get(lot, LOT_PORTS[args.lot])
 
     log = MessageLog("client_" + args.id)
     msg = {"type": args.op, "req_id": str(uuid.uuid4())[:8],
            "client": args.id, "ts": round(now(), 3)}
+    if args.space:
+        msg["space"] = args.space
 
-    print("[%s] [client %s] -> %s (req_id %s) to %s:%d"
-          % (ts_str(now()), args.id, args.op, msg["req_id"], host, port))
+    print("[%s] [client %s] -> %s %s (req_id %s) to %s:%d"
+          % (ts_str(now()), args.id, args.op, args.space or "", msg["req_id"], host, port))
     reply = request(host, port, msg, log)
     if reply is None:
         print("[%s] [client %s] FAILED: no reply" % (ts_str(now()), args.id))
@@ -66,10 +79,17 @@ def main():
         print(json.dumps(reply, indent=2))
         return
 
-    s = reply["lot_summary"]
-    print("[%s] [client %s] <- OK Lot %s: %d free, %d occupied, %d unknown"
-          % (ts_str(now()), args.id, reply["lot"], s["free"], s["occupied"], s["unknown"]))
-    print("   free spaces:", ", ".join(sp["id"] for sp in reply["free"]) or "(none)")
+    if args.op == "find":
+        s = reply["lot_summary"]
+        print("[%s] [client %s] <- OK Lot %s: %d free, %d occupied, %d reserved, %d unknown"
+              % (ts_str(now()), args.id, reply["lot"], s["free"], s["occupied"],
+                 s["reserved"], s["unknown"]))
+        print("   free spaces:", ", ".join(sp["id"] for sp in reply["free"]) or "(none)")
+    else:
+        extra = " (lease %.0fs)" % reply["lease"] if reply.get("lease") else ""
+        print("[%s] [client %s] <- %s %s%s"
+              % (ts_str(now()), args.id, reply["status"], reply.get("reason", ""), extra))
+    sys.exit(0 if reply["status"] == "OK" else 1)
 
 
 if __name__ == "__main__":

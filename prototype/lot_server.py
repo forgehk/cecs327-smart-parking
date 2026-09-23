@@ -16,8 +16,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from common import (LOT_PORTS, STALENESS_DELTA, MessageLog, now, peer_name,
-                    read_lines, send_json, ts_str)
+from common import (LOT_PORTS, RESERVATION_LEASE, STALENESS_DELTA, MessageLog, now,
+                    peer_name, read_lines, send_json, ts_str)
 
 
 class Space:
@@ -25,21 +25,29 @@ class Space:
         self.sid = sid
         self.sensor_state = "unknown"    # last thing the sensor told us
         self.sensor_ts = 0.0             # when it told us
+        self.reserved_by = None          # client id holding the reservation
+        self.lease_end = 0.0             # reservation expires at this time
 
     def state(self, t=None):
-        """What we actually report. If the sensor has been quiet for longer
-        than STALENESS_DELTA we don't trust the old value any more."""
+        """What we actually report. A live reservation wins; otherwise if the
+        sensor has been quiet for longer than STALENESS_DELTA we don't trust
+        the old value any more."""
         t = t or now()
+        if self.reserved_by and t < self.lease_end:
+            return "reserved"
         if t - self.sensor_ts > STALENESS_DELTA:
             return "unknown"
         return self.sensor_state
 
     def to_dict(self, t=None):
         t = t or now()
+        st = self.state(t)
         return {
             "id": self.sid,
-            "state": self.state(t),
+            "state": st,
             "age": round(t - self.sensor_ts, 1) if self.sensor_ts else None,
+            "reserved_by": self.reserved_by if st == "reserved" else None,
+            "lease_left": round(self.lease_end - t, 1) if st == "reserved" else None,
         }
 
 
@@ -87,21 +95,60 @@ class LotServer:
     def process_client(self, msg):
         op = msg.get("type")
         client = msg.get("client", "?")
+        sid = msg.get("space")
+        t = now()
         reply = {
             "type": "reply",
             "op": op,
             "req_id": msg.get("req_id"),
             "client": client,
             "lot": self.lot,
-            "ts": round(now(), 3),
+            "space": sid,
+            "ts": round(t, 3),
         }
-        t = now()
+
         if op == "find":
             free = [sp.to_dict(t) for sp in self.spaces.values() if sp.state(t) == "free"]
             reply["status"] = "OK"
             reply["free"] = free
             reply["lot_summary"] = self.summary(t)
             self.info("FIND from %s: %d free" % (client, len(free)))
+            return reply
+
+        sp = self.spaces.get(sid)
+        if sp is None:
+            reply["status"] = "DENIED"
+            reply["reason"] = "no such space in this lot"
+            return reply
+        st = sp.state(t)
+
+        if op == "reserve":
+            if st == "reserved" and sp.reserved_by == client:
+                reply["status"] = "OK"
+                reply["reason"] = "already held by you"
+                reply["lease"] = RESERVATION_LEASE
+            elif st == "free":
+                sp.reserved_by = client
+                sp.lease_end = t + RESERVATION_LEASE
+                reply["status"] = "OK"
+                reply["reason"] = "reserved"
+                reply["lease"] = RESERVATION_LEASE
+                self.info("RESERVE %s by %s: OK (%.0fs lease)" % (sid, client, RESERVATION_LEASE))
+            else:
+                reply["status"] = "DENIED"
+                reply["reason"] = st
+                self.info("RESERVE %s by %s: DENIED (%s)" % (sid, client, st))
+        elif op == "release":
+            if st == "reserved" and sp.reserved_by == client:
+                sp.reserved_by = None
+                sp.lease_end = 0.0
+                reply["status"] = "OK"
+                reply["reason"] = "released"
+                self.info("RELEASE %s by %s: OK" % (sid, client))
+            else:
+                reply["status"] = "DENIED"
+                reply["reason"] = "not reserved by you" if st == "reserved" else st
+                self.info("RELEASE %s by %s: DENIED" % (sid, client))
         else:
             reply["status"] = "DENIED"
             reply["reason"] = "unknown op %s" % op
@@ -109,7 +156,7 @@ class LotServer:
 
     def summary(self, t=None):
         t = t or now()
-        counts = {"free": 0, "occupied": 0, "unknown": 0}
+        counts = {"free": 0, "occupied": 0, "reserved": 0, "unknown": 0}
         for sp in self.spaces.values():
             counts[sp.state(t)] += 1
         counts["total"] = len(self.spaces)
@@ -117,11 +164,12 @@ class LotServer:
 
     def summary_text(self):
         s = self.summary()
-        return "Lot %s: %d free, %d occupied, %d unknown" % (
-            self.lot, s["free"], s["occupied"], s["unknown"])
+        return "Lot %s: %d free, %d occupied, %d reserved, %d unknown" % (
+            self.lot, s["free"], s["occupied"], s["reserved"], s["unknown"])
 
     def monitor_loop(self):
-        """Background thread: print when a space goes stale so it shows up in the demo."""
+        """Background thread: print state changes caused by time passing
+        (staleness, lease expiry) so they show up in the demo."""
         last = {sid: sp.state() for sid, sp in self.spaces.items()}
         while True:
             time.sleep(1.0)
@@ -133,6 +181,11 @@ class LotServer:
                         if st == "unknown":
                             self.info("STALE  %s: nothing from sensor for >%.0fs -> unknown"
                                       % (sid, STALENESS_DELTA))
+                        elif last[sid] == "reserved":
+                            self.info("LEASE  %s: reservation by %s expired -> %s"
+                                      % (sid, sp.reserved_by, st))
+                            sp.reserved_by = None
+                            sp.lease_end = 0.0
                         last[sid] = st
 
     # ---- connections ----
@@ -145,7 +198,7 @@ class LotServer:
                 t = msg.get("type")
                 if t in ("heartbeat", "event"):
                     self.handle_sensor(msg)
-                elif t == "find":
+                elif t in ("find", "reserve", "release"):
                     self.handle_client(msg, conn, peer)
                 else:
                     self.info("ignored message type %r from %s" % (t, peer))
@@ -160,7 +213,8 @@ class LotServer:
         srv.bind(("0.0.0.0", self.port))
         srv.listen(64)
         threading.Thread(target=self.monitor_loop, daemon=True).start()
-        self.info("listening on :%d, delta=%.0fs, log=%s" % (self.port, STALENESS_DELTA, self.log.path))
+        self.info("listening on :%d, delta=%.0fs, lease=%.0fs, log=%s"
+                  % (self.port, STALENESS_DELTA, RESERVATION_LEASE, self.log.path))
         self.info(self.summary_text())
         try:
             while True:
