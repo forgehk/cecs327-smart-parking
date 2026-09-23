@@ -1,0 +1,31 @@
+[23:28:42] [lot_server_A] listening on :5001, peers=['B'], delta=6s, lease=30s, log=/home/claude/sp2/prototype/logs/lot_server_A.log
+[23:28:42] [lot_server_A] Lot A: 0 free, 0 occupied, 0 reserved, 20 unknown
+[23:28:45] [lot_server_A] EVENT  A-11 -> occupied (seq 3)
+[23:28:46] [lot_server_A] EVENT  A-18 -> occupied (seq 5)
+[23:28:48] [lot_server_A] FIND from driver1: 14 free
+[23:28:48] [lot_server_A] RESERVE A-03 by alice: OK (30s lease)
+[23:28:48] [lot_server_A] RESERVE A-03 by bob: DENIED (reserved)
+[23:28:48] [lot_server_A] DUPLICATE req 682070ff -> resending cached reply
+[23:28:48] [lot_server_A] RELEASE A-03 by alice: OK
+[23:28:53] [lot_server_A] STALE  A-01: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-02: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-03: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-04: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-05: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-06: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-07: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-08: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-09: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-10: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-11: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-12: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-13: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-14: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-15: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-16: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-17: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-18: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-19: nothing from sensor for >6s -> unknown
+[23:28:53] [lot_server_A] STALE  A-20: nothing from sensor for >6s -> unknown
+[23:28:56] [lot_server_A] FIND from driver1: 0 free
+[23:28:56] [lot_server_A] RESERVE A-05 by bob: DENIED (unknown)

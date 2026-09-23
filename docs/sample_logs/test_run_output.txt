@@ -1,0 +1,32 @@
+
+[1] Basic request/response, one driver per space
+  PASS  find returned a free space (A-01)
+  PASS  alice reserve A-01 -> OK reserved
+  PASS  bob reserve A-01 -> DENIED (reserved)  [one driver per space]
+  PASS  bob release A-01 -> DENIED (not his)
+  PASS  alice release A-01 -> OK
+  PASS  lot_server_A.log contains the received request and the sent reply
+
+[2] Idempotent retry: lost reply must not create a second reservation
+  PASS  retry with same req_id -> OK duplicate=True (cached reply)
+  PASS  server log shows the request twice with the SAME req_id
+
+[3] Sensor node crash -> spaces become unknown after delta
+  PASS  before: {'free': 16, 'occupied': 4, 'reserved': 0, 'unknown': 0, 'total': 20}
+  ... sensor killed, waiting 8 s (delta = 6 s)
+  PASS  after : {'free': 0, 'occupied': 0, 'reserved': 0, 'unknown': 20, 'total': 20} -> find returns no free spaces
+
+[4] Lot server crash + recovery from the append-only log
+  PASS  dave reserve A-01 -> OK
+  ... lot server A killed; client should fail, then we restart it
+  PASS  client gets no reply while server is down
+  PASS  after restart, erin reserve A-01 -> DENIED (reserved): reservation survived the crash
+  PASS  server console shows RECOVERY: replayed N log entries
+
+[5] Peer failure: other lot summary goes stale, own lot keeps working
+  PASS  A knows about B: {'free': 12, 'unknown': 0, 'age': 2.0, 'stale': False}
+  ... lot server B killed, waiting 11 s (peer stale after 9 s)
+  PASS  A still answers clients
+  PASS  B's summary marked STALE: {'free': 12, 'unknown': 0, 'age': 13.0, 'stale': True}
+
+ALL PASSED

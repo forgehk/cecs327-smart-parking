@@ -1,0 +1,4 @@
+{"ts": 1790144928.397, "process": "client_bob", "dir": "send", "peer": "127.0.0.1:5001", "msg": {"type": "reserve", "req_id": "80c5f3ab", "client": "bob", "ts": 1790144928.395, "space": "A-03"}}
+{"ts": 1790144928.399, "process": "client_bob", "dir": "recv", "peer": "127.0.0.1:5001", "msg": {"type": "reply", "op": "reserve", "req_id": "80c5f3ab", "client": "bob", "lot": "A", "space": "A-03", "ts": 1790144928.398, "status": "DENIED", "reason": "reserved"}}
+{"ts": 1790144936.573, "process": "client_bob", "dir": "send", "peer": "127.0.0.1:5001", "msg": {"type": "reserve", "req_id": "e4caf27e", "client": "bob", "ts": 1790144936.571, "space": "A-05"}}
+{"ts": 1790144936.575, "process": "client_bob", "dir": "recv", "peer": "127.0.0.1:5001", "msg": {"type": "reply", "op": "reserve", "req_id": "e4caf27e", "client": "bob", "lot": "A", "space": "A-05", "ts": 1790144936.574, "status": "DENIED", "reason": "unknown"}}

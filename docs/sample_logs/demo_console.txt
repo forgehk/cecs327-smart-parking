@@ -1,0 +1,20 @@
+[23:28:48] [client driver1] -> find  (req_id d5b11c47) to 127.0.0.1:5001
+[23:28:48] [client driver1] <- OK Lot A: 14 free, 6 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-08, A-10, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 3.0s old
+[23:28:48] [client alice] -> reserve A-03 (req_id cc1db4fa) to 127.0.0.1:5001
+[23:28:48] [client alice] <- OK reserved (lease 30s)
+[23:28:48] [client bob] -> reserve A-03 (req_id 80c5f3ab) to 127.0.0.1:5001
+[23:28:48] [client bob] <- DENIED reserved
+[23:28:48] [client alice] -> reserve A-03 (req_id 682070ff) to 127.0.0.1:5001
+[23:28:48] [client] (demo) pretending reply to 682070ff got lost, retrying with same req_id
+[23:28:48] [client alice] <- OK already held by you (lease 30s) (duplicate - cached reply)
+[23:28:48] [client alice] -> release A-03 (req_id 8f4b97e7) to 127.0.0.1:5001
+[23:28:48] [client alice] <- OK released
+... sensor node A killed, waiting 8 s (delta = 6 s)
+[23:28:56] [client driver1] -> find  (req_id d9bce376) to 127.0.0.1:5001
+[23:28:56] [client driver1] <- OK Lot A: 0 free, 0 occupied, 0 reserved, 20 unknown
+   free spaces: (none)
+   Lot B: 12 free, 0 unknown - 2.2s old
+[23:28:56] [client bob] -> reserve A-05 (req_id e4caf27e) to 127.0.0.1:5001
+[23:28:56] [client bob] <- DENIED unknown
