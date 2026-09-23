@@ -13,20 +13,34 @@ import argparse
 import socket
 import sys
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 
-from common import (LOT_PORTS, MessageLog, now, peer_name, read_lines,
-                    send_json, ts_str)
+from common import (LOT_PORTS, STALENESS_DELTA, MessageLog, now, peer_name,
+                    read_lines, send_json, ts_str)
 
 
 class Space:
     def __init__(self, sid):
         self.sid = sid
-        self.state = "unknown"     # free / occupied / unknown
-        self.updated = 0.0
+        self.sensor_state = "unknown"    # last thing the sensor told us
+        self.sensor_ts = 0.0             # when it told us
 
-    def to_dict(self):
-        return {"id": self.sid, "state": self.state}
+    def state(self, t=None):
+        """What we actually report. If the sensor has been quiet for longer
+        than STALENESS_DELTA we don't trust the old value any more."""
+        t = t or now()
+        if t - self.sensor_ts > STALENESS_DELTA:
+            return "unknown"
+        return self.sensor_state
+
+    def to_dict(self, t=None):
+        t = t or now()
+        return {
+            "id": self.sid,
+            "state": self.state(t),
+            "age": round(t - self.sensor_ts, 1) if self.sensor_ts else None,
+        }
 
 
 class LotServer:
@@ -53,14 +67,14 @@ class LotServer:
             if msg["type"] == "heartbeat":
                 for sid, state in msg.get("spaces", {}).items():
                     if sid in self.spaces:
-                        self.spaces[sid].state = state
-                        self.spaces[sid].updated = t
+                        self.spaces[sid].sensor_state = state
+                        self.spaces[sid].sensor_ts = t
             elif msg["type"] == "event":
                 sp = self.spaces.get(msg.get("space"))
                 if sp:
-                    sp.state = msg["state"]
-                    sp.updated = t
-                    self.info("EVENT  %s -> %s" % (sp.sid, sp.state))
+                    sp.sensor_state = msg["state"]
+                    sp.sensor_ts = t
+                    self.info("EVENT  %s -> %s (seq %s)" % (sp.sid, sp.sensor_state, msg.get("seq")))
 
     # ---- client messages ----
 
@@ -81,23 +95,45 @@ class LotServer:
             "lot": self.lot,
             "ts": round(now(), 3),
         }
+        t = now()
         if op == "find":
-            free = [sp.to_dict() for sp in self.spaces.values() if sp.state == "free"]
+            free = [sp.to_dict(t) for sp in self.spaces.values() if sp.state(t) == "free"]
             reply["status"] = "OK"
             reply["free"] = free
-            reply["lot_summary"] = self.summary()
+            reply["lot_summary"] = self.summary(t)
             self.info("FIND from %s: %d free" % (client, len(free)))
         else:
             reply["status"] = "DENIED"
             reply["reason"] = "unknown op %s" % op
         return reply
 
-    def summary(self):
+    def summary(self, t=None):
+        t = t or now()
         counts = {"free": 0, "occupied": 0, "unknown": 0}
         for sp in self.spaces.values():
-            counts[sp.state] += 1
+            counts[sp.state(t)] += 1
         counts["total"] = len(self.spaces)
         return counts
+
+    def summary_text(self):
+        s = self.summary()
+        return "Lot %s: %d free, %d occupied, %d unknown" % (
+            self.lot, s["free"], s["occupied"], s["unknown"])
+
+    def monitor_loop(self):
+        """Background thread: print when a space goes stale so it shows up in the demo."""
+        last = {sid: sp.state() for sid, sp in self.spaces.items()}
+        while True:
+            time.sleep(1.0)
+            with self.lock:
+                t = now()
+                for sid, sp in self.spaces.items():
+                    st = sp.state(t)
+                    if st != last[sid]:
+                        if st == "unknown":
+                            self.info("STALE  %s: nothing from sensor for >%.0fs -> unknown"
+                                      % (sid, STALENESS_DELTA))
+                        last[sid] = st
 
     # ---- connections ----
 
@@ -123,7 +159,9 @@ class LotServer:
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("0.0.0.0", self.port))
         srv.listen(64)
-        self.info("listening on :%d, log=%s" % (self.port, self.log.path))
+        threading.Thread(target=self.monitor_loop, daemon=True).start()
+        self.info("listening on :%d, delta=%.0fs, log=%s" % (self.port, STALENESS_DELTA, self.log.path))
+        self.info(self.summary_text())
         try:
             while True:
                 conn, addr = srv.accept()
