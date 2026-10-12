@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Distributed Smart Parking - CECS 327</title>
-  <meta name="description" content="Milestone 1 prototype: sensor nodes, two lot servers and a driver client running as separate processes that only communicate by messages.">
+  <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) and Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication).">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -13,22 +13,26 @@
   <div>
     <h1>Distributed Smart Parking - live prototype</h1>
     <div class="sub">
-      CECS 327 · Milestone 1 · Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda ·
-      each box below is a separate process (Web Worker) with its own memory; they only communicate by messages.
-      <a href="m2.html" style="color:#7c9cff">Milestone 2: communication model and sequence diagrams &rarr;</a>
+      CECS 327 · Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda ·
+      <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
     </div>
   </div>
   <div class="pills" id="pills"></div>
+  <nav class="nav">
+    <a href="#milestone-1">Milestone 1 · live demo</a>
+    <a href="#milestone-2">Milestone 2 · communication model + sequence diagrams</a>
+  </nav>
 </header>
 
 <main>
 
   <!-- architecture diagram, drawn by diagram.js -->
-  <section class="card">
-    <h2>Architecture <span class="r" id="msgcount">0 msgs</span></h2>
+  <section class="card" id="milestone-1">
+    <h2>Milestone 1 · Architecture <span class="r" id="msgcount">0 msgs</span></h2>
     <svg id="diagram" viewBox="0 0 560 340" role="img"
          aria-label="Two sensor nodes push to two lot servers, which exchange summaries as peers; the client talks to either lot server."></svg>
     <div class="hint">
+      Each box is a separate process (Web Worker) with its own memory; they only communicate by messages.
       Dots are messages in flight:
       <span style="color:#86efac">sensor</span> ·
       <span style="color:#93c5fd">client</span> ·
@@ -123,6 +127,68 @@
     </div>
   </section>
 
+  <!-- ===================== Milestone 2: communication ===================== -->
+  <section class="card span3" id="milestone-2">
+    <h2>Milestone 2 · Communication <span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/comm">prototype/comm on GitHub</a></span></h2>
+    <p class="steps">
+      Milestone 2 replaces the simple messages above with a real communication layer: <b>TCP sockets</b>, every message a <b>JSON envelope</b>
+      (<code>type, msg_id, sender, timestamp, reply_to, payload</code>) sent as a 4-byte length header + UTF-8 body, and three patterns:
+      <b>request-reply</b> (client ↔ lot server), <b>publish-subscribe</b> (sensors → broker → subscribers) and <b>group communication</b>
+      (lot servers join a group at the registry and fan summaries out to every member).
+      Two new processes: the <b>broker</b> (:5000) and the <b>registry</b> (:5010).
+      Every process logs every message it sends or receives; a crashed lot server replays its log.
+      Each diagram below has a download button so it can go straight into the report.
+    </p>
+
+    <div class="m2">
+      <div class="fig">
+        <div class="bar"><h3>Communication model</h3><button data-dl="model">download PNG</button></div>
+        <p>Who connects to whom. Every arrow is a TCP connection carrying framed JSON. A lot server is a service to clients, a subscriber and publisher at the broker, and a member of the <code>lot_servers</code> group.</p>
+        <svg id="model" viewBox="0 0 1000 545" role="img" aria-label="Communication model"></svg>
+        <div class="m2legend">
+          <span><i style="background:#059669"></i>sensor node (publisher)</span>
+          <span><i style="background:#7c3aed"></i>broker (pub-sub)</span>
+          <span><i style="background:#1d4ed8"></i>lot server (service, subscriber, publisher, group member)</span>
+          <span><i style="background:#dc2626"></i>registry (group membership)</span>
+          <span><i style="background:#ca8a04"></i>client (request-reply, subscriber)</span>
+        </div>
+      </div>
+
+      <div class="fig">
+        <div class="bar"><h3>Request-reply</h3><button data-dl="rr">download PNG</button></div>
+        <p>One connection per exchange: open, REQUEST, REPLY, close. The REPLY echoes the REQUEST's <code>msg_id</code> in <code>reply_to</code>. No reply within 2 s → the client reconnects and resends the same REQUEST; the service caches replies by <code>msg_id</code>, so the retry gets the cached answer and the reservation is never made twice.</p>
+        <svg id="rr" viewBox="0 0 1000 520" role="img" aria-label="Request-reply sequence diagram"></svg>
+      </div>
+
+      <div class="fig">
+        <div class="bar"><h3>Publish-subscribe</h3><button data-dl="ps">download PNG</button></div>
+        <p>Subscribers keep one long-lived connection to the broker. A PUBLISH is fanned out as one EVENT per subscriber on that subscriber's own connection, one log line per delivery. The publisher gets an ACK with how many subscribers were reached. A subscriber the broker cannot deliver to is dropped from the topic.</p>
+        <svg id="ps" viewBox="0 0 1000 560" role="img" aria-label="Publish-subscribe sequence diagram"></svg>
+      </div>
+
+      <div class="fig">
+        <div class="bar"><h3>Group communication</h3><button data-dl="grp">download PNG</button></div>
+        <p>Members JOIN a group at the registry. To send, the sender asks the registry for MEMBERS, then opens one connection per member and sends GROUP_MSG. An unreachable member is logged and skipped; the others still get the message. No ordering or atomic delivery is guaranteed.</p>
+        <svg id="grp" viewBox="0 0 1000 560" role="img" aria-label="Group communication sequence diagram"></svg>
+      </div>
+
+      <div class="fig">
+        <h3>Message envelope</h3>
+        <p>Every message, in every pattern, is a JSON object with these fields, sent as a 4-byte big-endian length followed by the UTF-8 body.</p>
+        <table>
+          <tr><th>field</th><th>meaning</th></tr>
+          <tr><td><code>type</code></td><td>REQUEST, REPLY, SUBSCRIBE, UNSUBSCRIBE, PUBLISH, EVENT, ACK, JOIN, LEAVE, MEMBERS, GROUP_MSG — used to dispatch</td></tr>
+          <tr><td><code>msg_id</code></td><td>unique id; a REPLY or ACK carries the id it answers in <code>reply_to</code></td></tr>
+          <tr><td><code>sender</code></td><td>process name, for the logs</td></tr>
+          <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's clock</td></tr>
+          <tr><td><code>payload</code></td><td>type-specific data</td></tr>
+        </table>
+        <p style="margin-top:10px">A real example of every type, taken from log files: <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">docs/MESSAGES.md</a>.
+          Sample logs: <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/docs/sample_logs_m2">docs/sample_logs_m2</a>.</p>
+      </div>
+    </div>
+  </section>
+
 </main>
 
 <footer>
@@ -137,5 +203,6 @@
 <script src="js/diagram.js"></script>
 <script src="js/scenarios.js"></script>
 <script src="js/main.js"></script>
+<script src="js/m2.js"></script>
 </body>
 </html>
