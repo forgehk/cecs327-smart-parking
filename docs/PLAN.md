@@ -18,8 +18,8 @@ status, user queries, reservations and system updates, and must include:
 | Sensor communication | done (M1) | sensor node -> lot server events + heartbeats |
 | Parking-space status and user queries | done (M1) | lot server state table, `find` |
 | Reservations | done (M1) | `reserve` / `release`, 30 s lease |
-| Publish-subscribe messaging | not started | M2 |
-| Peer-to-peer integration | partial (M1) | lot servers exchange summaries |
+| Publish-subscribe messaging | done (M2) | broker, `lot/<lot>/sensor` and `lot/<lot>/status` topics |
+| Peer-to-peer integration | partial (M1, M2) | lot servers are a group at the registry and exchange summaries by group send |
 | Coordination among distributed nodes | not started | M3 |
 | Replicated status information | not started | M4 |
 | Fault-tolerant sensor operation | partial (M1) | staleness -> unknown, log replay |
@@ -53,22 +53,46 @@ Still to do before submission:
 - [ ] fill in the contribution table (everyone)
 - [ ] team lead submits: PDF, video link, repo link
 
-## Milestone 2 - Communication (tentative)
+## Milestone 2 - Communication
 
-Goal: replace the ad-hoc request/response with proper interprocess communication
-patterns from the course notes and add publish-subscribe for status updates.
+Goal: one transport (TCP sockets), one wire format (length-prefixed JSON with a
+common envelope), and the three communication patterns from the course built on it.
 
-- [ ] publish-subscribe: lot servers publish space-state changes on a topic
-      (`parking/<lot>/<space>`); clients subscribe instead of polling `find`.
-      Options: our own broker process over TCP, or MQTT (paho, shown in the notes).
-- [ ] decide message format properly (keep JSON, document every field)
-- [ ] RPC-style client API: `find()`, `reserve()`, `release()` wrapping the socket code
-- [ ] multicast/group message to all lot servers (used later for coordination)
-- [ ] UDP for sensor heartbeats? (measure loss vs TCP, discuss in report)
-- [ ] web demo: show subscriptions and pushed updates instead of find-polling
+Code - done:
 
-Report items: communication model, message sequence diagrams, choice of protocol per
-link and why.
+- [x] `comm/framing.py` - 4-byte length + JSON body, partial reads, malformed input
+- [x] `comm/envelope.py` - type, msg_id, sender, timestamp, reply_to, payload
+- [x] `comm/request_reply.py` - one exchange per connection, ERROR replies for unknown
+      op / bad args, reply cache so a retry with the same msg_id isn't executed twice
+- [x] `comm/pubsub.py` + `broker.py` - topics, long-lived subscriber connections,
+      one EVENT copy per subscriber, dead subscribers dropped
+- [x] `comm/group.py` + `registry.py` - JOIN/LEAVE/MEMBERS, group_send fan-out with
+      one log line per target, unreachable members skipped
+- [x] sensor -> broker -> lot server (pub-sub), client -> lot server (request-reply),
+      lot server -> group (summaries), lot server -> `lot/<lot>/status` (pub-sub)
+- [x] `client.py watch` subscribes to a lot's status topic
+- [x] tests: framing unit tests, pattern tests, seven whole-system scenarios
+- [x] `docs/MESSAGES.md` with a real example of every message type
+- [x] `docs/sample_logs_m2/`
+
+Report - to do (owner: BL, outline already written):
+
+- [ ] fill in the sockets / marshalling / TCP sections from `comm/framing.py`'s docstring
+- [ ] message format section: copy the examples from `docs/MESSAGES.md`
+- [ ] three sequence diagrams: request-reply, pub-sub (1 publisher, 2 subscribers,
+      broker), group send (sender, registry, 2 members)
+- [ ] communication model diagram (who connects to whom, which pattern on which arrow)
+- [ ] logging and evidence: paste from `docs/sample_logs_m2/demo_console.txt` and the
+      `.log` files
+- [ ] limitations: broker single point of failure, slow subscriber, no ordering across
+      group members, no atomic delivery, membership can change mid-send
+- [ ] video
+
+Not done / deferred:
+
+- the browser demo still shows the M1 wiring (no broker/registry)
+- UDP for heartbeats was considered and dropped: TCP already gives us framing and
+  the loss we care about is simulated at the sensor (`--drop-rate`)
 
 ## Milestone 3 - Peer-to-peer and coordination (tentative)
 
