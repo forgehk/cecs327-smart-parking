@@ -1,14 +1,13 @@
 """
-Shared helpers for all processes.
+Shared settings and the per-process message log.
 
-Messages are JSON objects, one per line, sent over TCP.
-Every process logs what it sends and receives to logs/<process>.log
-(also JSON lines) so we can trace the whole conversation afterwards.
+The wire format lives in comm/ (framing + envelope). Every process logs what it
+sends and receives to logs/<process>.log as JSON lines so the whole conversation
+can be traced afterwards.
 """
 
 import json
 import os
-import socket
 import threading
 import time
 
@@ -23,11 +22,22 @@ RESERVATION_LEASE = 30.0
 CLIENT_TIMEOUT = 2.0
 CLIENT_RETRIES = 3
 
-# which port each lot server listens on
-LOT_PORTS = {
+# ports
+BROKER_PORT = 5000          # pub-sub broker
+REGISTRY_PORT = 5010        # group membership registry
+LOT_PORTS = {               # lot server request-reply + GROUP_MSG listener
     "A": 5001,
     "B": 5002,
 }
+
+# topics and groups
+def sensor_topic(lot):
+    return "lot/%s/sensor" % lot
+
+def status_topic(lot):
+    return "lot/%s/status" % lot
+
+LOT_SERVER_GROUP = "lot_servers"
 
 
 def now():
@@ -51,7 +61,7 @@ class MessageLog:
         entry = {
             "ts": round(now(), 3),
             "process": self.process,
-            "dir": direction,      # "send", "recv" or "dropped"
+            "dir": direction,      # "send", "recv", "dropped" or "info"
             "peer": peer,
             "msg": msg,
         }
@@ -75,33 +85,3 @@ class MessageLog:
                 except json.JSONDecodeError:
                     # half-written last line after a crash, skip it
                     continue
-
-
-def send_json(sock, msg):
-    sock.sendall((json.dumps(msg) + "\n").encode("utf-8"))
-
-
-def read_lines(sock):
-    """Yield one JSON object per line until the other side closes."""
-    buf = b""
-    while True:
-        chunk = sock.recv(4096)
-        if not chunk:
-            return
-        buf += chunk
-        while b"\n" in buf:
-            line, buf = buf.split(b"\n", 1)
-            if not line.strip():
-                continue
-            try:
-                yield json.loads(line.decode("utf-8"))
-            except json.JSONDecodeError:
-                continue
-
-
-def peer_name(sock):
-    try:
-        host, port = sock.getpeername()
-        return "%s:%d" % (host, port)
-    except OSError:
-        return "?"

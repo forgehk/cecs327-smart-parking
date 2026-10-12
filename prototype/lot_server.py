@@ -5,29 +5,35 @@ Lot server - one process per parking lot.
     python lot_server.py --lot A
     python lot_server.py --lot B
 
-Holds the state of every space in its lot, takes updates from the lot's sensor
-node and answers client queries. Everything comes in on one TCP port as JSON lines.
+Holds the state of every space in its lot. It is the only process that may
+change that state, which is what stops two drivers from getting the same space.
 
-The two lot servers are also peers: every few seconds each one sends the other a
-summary of its lot ("7 free, 2 unknown"), so a client talking to lot A can be told
-that lot B has room. The summary is only a hint - lot B's server is still the
-only one that can reserve a space in B.
+How it talks to everyone else (Milestone 2):
 
-Because every message is written to the log before/after it is handled, the
-server can rebuild its table from the log when it is restarted after a crash.
+    sensor node  -> broker -> us      pub-sub: we SUBSCRIBE to lot/<lot>/sensor and
+                                      get the sensor's events and heartbeats as EVENTs
+    client       -> us                request-reply: find / reserve / release on our port
+    us           -> broker            pub-sub: we PUBLISH every space state change to
+                                      lot/<lot>/status so anyone can watch the lot
+    us          <-> other lot servers group: we JOIN the lot_servers group at the registry
+                                      and send our summary to the group every few seconds;
+                                      members receive it as GROUP_MSG on their port
+
+Every message is written to logs/lot_server_<lot>.log, and on restart the server
+replays that log to rebuild its table (crash-recovery).
 """
 
 import argparse
 import os
-import socket
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 
-from common import (LOT_PORTS, PEER_STALE_AFTER, PEER_SUMMARY_INTERVAL, RESERVATION_LEASE,
-                    STALENESS_DELTA, MessageLog, now, peer_name, read_lines, send_json,
-                    ts_str)
+from comm import group, pubsub, request_reply
+from comm.request_reply import BadRequest
+from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, PEER_STALE_AFTER,
+                    PEER_SUMMARY_INTERVAL, REGISTRY_PORT, RESERVATION_LEASE, STALENESS_DELTA,
+                    MessageLog, now, sensor_topic, status_topic, ts_str)
 
 
 class Space:
@@ -62,12 +68,12 @@ class Space:
 
 
 class LotServer:
-    def __init__(self, lot, port, peers, n_spaces, workers):
+    def __init__(self, lot, port, broker, registry, n_spaces, workers):
         self.lot = lot
         self.port = port
-        self.peers = peers                  # {"B": ("127.0.0.1", 5002)}
-        self.peer_summaries = {}            # lot -> (summary msg, time received)
-        self.stopping = False
+        self.address = "127.0.0.1:%d" % port
+        self.broker = broker                # (host, port)
+        self.registry = registry            # (host, port)
         self.name = "lot_server_" + lot
         self.log = MessageLog(self.name)
         self.lock = threading.Lock()
@@ -75,46 +81,56 @@ class LotServer:
         for i in range(1, n_spaces + 1):
             sid = "%s-%02d" % (lot, i)
             self.spaces[sid] = Space(sid)
-        self.pool = ThreadPoolExecutor(max_workers=workers)
-        # replies we already sent, keyed by req_id. If the client's reply got
-        # lost and it retries, we answer the same thing instead of doing it twice.
-        self.seen_requests = {}
+        self.peer_summaries = {}            # lot -> (summary dict, time received)
+        self.known_peers = set()
         self.last_sensor_seq = -1
+        self.stopping = False
+
+        self.service = request_reply.Service(self.name, port, self.log, workers=workers)
+        self.service.register("find", self.op_find)
+        self.service.register("reserve", self.op_reserve)
+        self.service.register("release", self.op_release)
+        self.service.on_type("GROUP_MSG", self.on_group_msg)
+
+        self.subscriber = pubsub.Subscriber(broker[0], broker[1], self.name, self.log, self.on_sensor_event)
+        self.publisher = pubsub.Publisher(broker[0], broker[1], self.name, self.log)
 
     def info(self, text):
         print("[%s] [%s] %s" % (ts_str(now()), self.name, text), flush=True)
 
     # ---- crash recovery ----
 
-    def apply_sensor(self, msg, t):
-        if msg["type"] == "heartbeat":
-            for sid, state in msg.get("spaces", {}).items():
+    def apply_sensor(self, data, t):
+        if data.get("type") == "heartbeat":
+            for sid, state in data.get("spaces", {}).items():
                 if sid in self.spaces:
                     self.spaces[sid].sensor_state = state
                     self.spaces[sid].sensor_ts = t
-        elif msg["type"] == "event":
-            sp = self.spaces.get(msg.get("space"))
+        elif data.get("type") == "event":
+            sp = self.spaces.get(data.get("space"))
             if sp:
-                sp.sensor_state = msg["state"]
+                sp.sensor_state = data["state"]
                 sp.sensor_ts = t
 
     def replay_log(self):
         """Go through our own log and redo everything that changed state:
-        sensor reports we received and reservations/releases we said OK to."""
+        sensor EVENTs we received and reservations/releases we granted."""
         n = 0
         for entry in self.log.replay():
             msg = entry.get("msg", {})
             t = entry.get("ts", 0)
-            if entry["dir"] == "recv" and msg.get("type") in ("heartbeat", "event"):
-                self.apply_sensor(msg, t)
+            p = msg.get("payload", {}) if isinstance(msg, dict) else {}
+            if entry["dir"] == "recv" and msg.get("type") == "EVENT" and p.get("topic") == sensor_topic(self.lot):
+                self.apply_sensor(p.get("data", {}), t)
                 n += 1
-            elif entry["dir"] == "send" and msg.get("type") == "reply" and msg.get("status") == "OK":
-                sp = self.spaces.get(msg.get("space"))
-                if sp and msg.get("op") == "reserve":
-                    sp.reserved_by = msg.get("client")
+            elif entry["dir"] == "send" and msg.get("type") == "REPLY" and p.get("status") == "OK":
+                r = p.get("result", {})
+                sp = self.spaces.get(r.get("space"))
+                if sp and r.get("op") == "reserve" and r.get("granted"):
+                    sp.reserved_by = r.get("client")
                     sp.lease_end = t + RESERVATION_LEASE
                     n += 1
-                elif sp and msg.get("op") == "release":
+                elif sp and r.get("op") == "release" and r.get("granted"):
                     sp.reserved_by = None
                     sp.lease_end = 0.0
                     n += 1
@@ -122,110 +138,90 @@ class LotServer:
             self.info("RECOVERY: replayed %d entries from %s" % (n, self.log.path))
             self.info("RECOVERY: " + self.summary_text())
 
-    # ---- sensor messages ----
+    # ---- sensor (pub-sub subscriber) ----
 
-    def handle_sensor(self, msg):
+    def on_sensor_event(self, topic, data, msg):
         with self.lock:
-            self.apply_sensor(msg, now())
-            if msg["type"] == "event":
-                self.info("EVENT  %s -> %s (seq %s)" % (msg["space"], msg["state"], msg.get("seq")))
+            self.apply_sensor(data, now())
+            if data.get("type") == "event":
+                self.info("EVENT  %s -> %s (seq %s)" % (data["space"], data["state"], data.get("seq")))
             # gaps in the sequence numbers = the sensor dropped something.
             # the next heartbeat carries the full table so it repairs itself.
-            seq = msg.get("seq", -1)
+            seq = data.get("seq", -1)
             if self.last_sensor_seq >= 0 and seq > self.last_sensor_seq + 1:
                 self.info("OMISSION: sensor seq jumped %d -> %d" % (self.last_sensor_seq, seq))
             self.last_sensor_seq = seq
 
-    # ---- client messages ----
+    # ---- clients (request-reply handlers) ----
 
-    def handle_client(self, msg, conn, peer):
-        req_id = msg.get("req_id")
-        with self.lock:
-            if req_id in self.seen_requests:
-                reply = dict(self.seen_requests[req_id])
-                reply["duplicate"] = True
-                self.info("DUPLICATE req %s -> resending cached reply" % req_id)
-            else:
-                reply = self.process_client(msg)
-                if req_id:
-                    self.seen_requests[req_id] = reply
-        self.log.record("send", peer, reply)
-        send_json(conn, reply)
-
-    def process_client(self, msg):
-        op = msg.get("type")
-        client = msg.get("client", "?")
-        sid = msg.get("space")
+    def op_find(self, args, req):
         t = now()
-        reply = {
-            "type": "reply",
-            "op": op,
-            "req_id": msg.get("req_id"),
-            "client": client,
-            "lot": self.lot,
-            "space": sid,
-            "ts": round(t, 3),
-        }
-
-        if op == "find":
+        with self.lock:
             free = [sp.to_dict(t) for sp in self.spaces.values() if sp.state(t) == "free"]
-            reply["status"] = "OK"
-            reply["free"] = free
-            reply["lot_summary"] = self.summary(t)
-            reply["other_lots"] = self.peer_view(t)
-            self.info("FIND from %s: %d free" % (client, len(free)))
-            return reply
+            result = {
+                "op": "find", "lot": self.lot,
+                "free": free,
+                "lot_summary": self.summary(t),
+                "other_lots": self.peer_view(t),
+            }
+        self.info("FIND from %s: %d free" % (args.get("client", "?"), len(free)))
+        return result
 
+    def _space_and_client(self, args):
+        client = args.get("client")
+        sid = args.get("space")
+        if not client:
+            raise BadRequest("missing client")
+        if not sid:
+            raise BadRequest("missing space")
         sp = self.spaces.get(sid)
         if sp is None:
-            reply["status"] = "DENIED"
-            reply["reason"] = "no such space in this lot"
-            return reply
-        st = sp.state(t)
+            raise BadRequest("no such space in lot %s: %s" % (self.lot, sid))
+        return sp, client
 
-        if op == "reserve":
+    def op_reserve(self, args, req):
+        sp, client = self._space_and_client(args)
+        t = now()
+        with self.lock:
+            st = sp.state(t)
+            result = {"op": "reserve", "lot": self.lot, "space": sp.sid, "client": client}
             if st == "reserved" and sp.reserved_by == client:
-                reply["status"] = "OK"
-                reply["reason"] = "already held by you"
-                reply["lease"] = RESERVATION_LEASE
+                result.update(granted=True, reason="already held by you", lease=RESERVATION_LEASE)
             elif st == "free":
                 sp.reserved_by = client
                 sp.lease_end = t + RESERVATION_LEASE
-                reply["status"] = "OK"
-                reply["reason"] = "reserved"
-                reply["lease"] = RESERVATION_LEASE
-                self.info("RESERVE %s by %s: OK (%.0fs lease)" % (sid, client, RESERVATION_LEASE))
+                result.update(granted=True, reason="reserved", lease=RESERVATION_LEASE)
+                self.info("RESERVE %s by %s: OK (%.0fs lease)" % (sp.sid, client, RESERVATION_LEASE))
             else:
-                reply["status"] = "DENIED"
-                reply["reason"] = st
-                self.info("RESERVE %s by %s: DENIED (%s)" % (sid, client, st))
-        elif op == "release":
+                result.update(granted=False, reason=st)
+                self.info("RESERVE %s by %s: DENIED (%s)" % (sp.sid, client, st))
+        return result
+
+    def op_release(self, args, req):
+        sp, client = self._space_and_client(args)
+        t = now()
+        with self.lock:
+            st = sp.state(t)
+            result = {"op": "release", "lot": self.lot, "space": sp.sid, "client": client}
             if st == "reserved" and sp.reserved_by == client:
                 sp.reserved_by = None
                 sp.lease_end = 0.0
-                reply["status"] = "OK"
-                reply["reason"] = "released"
-                self.info("RELEASE %s by %s: OK" % (sid, client))
+                result.update(granted=True, reason="released")
+                self.info("RELEASE %s by %s: OK" % (sp.sid, client))
             else:
-                reply["status"] = "DENIED"
-                reply["reason"] = "not reserved by you" if st == "reserved" else st
-                self.info("RELEASE %s by %s: DENIED" % (sid, client))
-        else:
-            reply["status"] = "DENIED"
-            reply["reason"] = "unknown op %s" % op
-        return reply
+                result.update(granted=False, reason="not reserved by you" if st == "reserved" else st)
+                self.info("RELEASE %s by %s: DENIED" % (sp.sid, client))
+        return result
 
-    # ---- peer messages ----
+    # ---- other lot servers (group communication) ----
 
-    def handle_peer(self, msg, conn, peer):
+    def on_group_msg(self, msg, conn):
+        data = msg["payload"].get("data", {})
+        if data.get("kind") != "summary":
+            return
         with self.lock:
-            self.peer_summaries[msg["lot"]] = (msg, now())
-        ack = {"type": "summary_ack", "lot": self.lot, "ts": round(now(), 3)}
-        self.log.record("send", peer, ack)
-        try:
-            send_json(conn, ack)
-        except OSError:
-            pass
+            self.peer_summaries[data["lot"]] = (data, now())
+            self.known_peers.add(data["lot"])
 
     def peer_view(self, t=None):
         """What we currently believe about the other lots, with how old it is."""
@@ -239,31 +235,42 @@ class LotServer:
                 "age": age,
                 "stale": age > PEER_STALE_AFTER,
             }
-        for lot in self.peers:
-            if lot not in out:
-                out[lot] = {"free": None, "unknown": None, "age": None, "stale": True}
         return out
 
-    def peer_gossip_loop(self):
-        """Background thread: send our summary to every peer every few seconds."""
+    def join_group(self):
+        while not self.stopping:
+            try:
+                ack = group.join(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.address, self.name, self.log)
+                self.info("JOIN %s at registry: members now %s" % (LOT_SERVER_GROUP, ack.get("members")))
+                return
+            except OSError:
+                self.info("registry unreachable, retrying JOIN in 2s")
+                time.sleep(2.0)
+
+    def gossip_loop(self):
+        """Background thread: send our summary to the whole group every few seconds."""
         while not self.stopping:
             time.sleep(PEER_SUMMARY_INTERVAL)
             with self.lock:
                 summ = self.summary()
-            msg = {"type": "summary", "lot": self.lot, "ts": round(now(), 3)}
-            msg.update(summ)
-            for lot, (host, port) in self.peers.items():
-                target = "%s:%d" % (host, port)
-                try:
-                    with socket.create_connection((host, port), timeout=1.0) as s:
-                        self.log.record("send", target, msg)
-                        send_json(s, msg)
-                        s.settimeout(1.0)
-                        for ack in read_lines(s):
-                            self.log.record("recv", target, ack)
-                            break
-                except OSError:
-                    self.info("PEER %s unreachable, still serving own lot" % lot)
+            data = {"kind": "summary", "lot": self.lot, "ts": round(now(), 3)}
+            data.update(summ)
+            delivered, failed = group.group_send(self.registry[0], self.registry[1], LOT_SERVER_GROUP,
+                                                 data, self.name, self.log, exclude=self.address)
+            for addr in failed:
+                self.info("PEER %s unreachable, still serving own lot" % addr)
+
+    # ---- status publishing ----
+
+    def publish_change(self, sp, st):
+        data = {"space": sp.sid, "state": st, "reserved_by": sp.reserved_by if st == "reserved" else None,
+                "publisher": self.name}
+        try:
+            self.publisher.publish(status_topic(self.lot), data)
+        except OSError:
+            pass    # broker down; the subscriber side will re-sync when it's back
+
+    # ---- summaries and the monitor thread ----
 
     def summary(self, t=None):
         t = t or now()
@@ -279,75 +286,75 @@ class LotServer:
             self.lot, s["free"], s["occupied"], s["reserved"], s["unknown"])
 
     def monitor_loop(self):
-        """Background thread: print state changes caused by time passing
-        (staleness, lease expiry) so they show up in the demo."""
+        """Background thread: notice state changes (from the sensor, from
+        reservations, from time passing) and publish them. Also prints the
+        ones caused by time so they show up in the demo."""
         last = {sid: sp.state() for sid, sp in self.spaces.items()}
-        while True:
+        last_peer_stale = {}
+        while not self.stopping:
             time.sleep(1.0)
+            changed = []
             with self.lock:
                 t = now()
                 for sid, sp in self.spaces.items():
                     st = sp.state(t)
                     if st != last[sid]:
                         if st == "unknown":
-                            self.info("STALE  %s: nothing from sensor for >%.0fs -> unknown"
-                                      % (sid, STALENESS_DELTA))
+                            self.info("STALE  %s: nothing from sensor for >%.0fs -> unknown" % (sid, STALENESS_DELTA))
                         elif last[sid] == "reserved":
-                            self.info("LEASE  %s: reservation by %s expired -> %s"
-                                      % (sid, sp.reserved_by, st))
+                            self.info("LEASE  %s: reservation by %s expired -> %s" % (sid, sp.reserved_by, st))
                             sp.reserved_by = None
                             sp.lease_end = 0.0
                         last[sid] = st
+                        changed.append((sp, st))
+                pv = self.peer_view(t)
+            for lot, v in pv.items():
+                if v["stale"] and not last_peer_stale.get(lot):
+                    self.info("PEER %s: last summary is %.0fs old -> STALE" % (lot, v["age"]))
+                last_peer_stale[lot] = v["stale"]
+            for sp, st in changed:
+                self.publish_change(sp, st)
 
-    # ---- connections ----
-
-    def serve_connection(self, conn, addr):
-        peer = peer_name(conn)
-        try:
-            for msg in read_lines(conn):
-                self.log.record("recv", peer, msg)
-                t = msg.get("type")
-                if t in ("heartbeat", "event"):
-                    self.handle_sensor(msg)
-                elif t in ("find", "reserve", "release"):
-                    self.handle_client(msg, conn, peer)
-                elif t == "summary":
-                    self.handle_peer(msg, conn, peer)
-                else:
-                    self.info("ignored message type %r from %s" % (t, peer))
-        except (ConnectionResetError, BrokenPipeError, OSError):
-            pass
-        finally:
-            conn.close()
+    # ---- lifecycle ----
 
     def run(self):
         self.replay_log()
-        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        srv.bind(("0.0.0.0", self.port))
-        srv.listen(64)
-        threading.Thread(target=self.monitor_loop, daemon=True).start()
-        threading.Thread(target=self.peer_gossip_loop, daemon=True).start()
-        self.info("listening on :%d, peers=%s, delta=%.0fs, lease=%.0fs, log=%s"
-                  % (self.port, list(self.peers), STALENESS_DELTA, RESERVATION_LEASE, self.log.path))
+        self.info("listening on :%d | broker %s:%d | registry %s:%d | delta=%.0fs lease=%.0fs"
+                  % (self.port, self.broker[0], self.broker[1], self.registry[0], self.registry[1],
+                     STALENESS_DELTA, RESERVATION_LEASE))
         self.info(self.summary_text())
+        self.subscriber.start()
+        self.subscriber.subscribe(sensor_topic(self.lot))
+        threading.Thread(target=self.join_group, daemon=True).start()
+        threading.Thread(target=self.gossip_loop, daemon=True).start()
+        threading.Thread(target=self.monitor_loop, daemon=True).start()
         try:
-            while True:
-                conn, addr = srv.accept()
-                self.pool.submit(self.serve_connection, conn, addr)
+            self.service.serve_forever()
         except KeyboardInterrupt:
-            self.info("shutting down")
+            pass
         finally:
             self.stopping = True
-            srv.close()
+            self.info("shutting down")
+            try:
+                group.leave(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.address, self.name, self.log)
+            except OSError:
+                pass
+            self.service.stop()
+
+
+def hostport(text, default_port):
+    if ":" in text:
+        h, p = text.split(":")
+        return h, int(p)
+    return text, default_port
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--lot", required=True)
     ap.add_argument("--port", type=int)
-    ap.add_argument("--peer", action="append", default=[],
-                    help="LOT=HOST:PORT, can repeat. Default: every other lot in LOT_PORTS")
+    ap.add_argument("--broker", default="127.0.0.1:%d" % BROKER_PORT)
+    ap.add_argument("--registry", default="127.0.0.1:%d" % REGISTRY_PORT)
     ap.add_argument("--spaces", type=int, default=20)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--fresh", action="store_true", help="delete the old log, start empty")
@@ -357,18 +364,8 @@ def main():
     if port is None:
         sys.exit("unknown lot %s, use --port" % args.lot)
 
-    peers = {}
-    if args.peer:
-        for p in args.peer:
-            lot, hostport = p.split("=")
-            host, pport = hostport.split(":")
-            peers[lot] = (host, int(pport))
-    else:
-        for lot, pt in LOT_PORTS.items():
-            if lot != args.lot:
-                peers[lot] = ("127.0.0.1", pt)
-
-    server = LotServer(args.lot, port, peers, args.spaces, args.workers)
+    server = LotServer(args.lot, port, hostport(args.broker, BROKER_PORT),
+                       hostport(args.registry, REGISTRY_PORT), args.spaces, args.workers)
     if args.fresh:
         try:
             os.remove(server.log.path)
