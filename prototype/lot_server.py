@@ -301,7 +301,8 @@ class LotServer:
                     if st != last[sid]:
                         if st == "unknown":
                             self.info("STALE  %s: nothing from sensor for >%.0fs -> unknown" % (sid, STALENESS_DELTA))
-                        elif last[sid] == "reserved":
+                        elif last[sid] == "reserved" and sp.reserved_by:
+                            # still marked reserved but the lease ran out (a release clears reserved_by itself)
                             self.info("LEASE  %s: reservation by %s expired -> %s" % (sid, sp.reserved_by, st))
                             sp.reserved_by = None
                             sp.lease_end = 0.0
