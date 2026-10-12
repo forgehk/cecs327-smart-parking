@@ -1,12 +1,14 @@
 # Distributed Smart Parking System
 
-CECS 327 - Introduction to Networks and Distributed Computing, Fall 2026, Milestone 1
+CECS 327 - Introduction to Networks and Distributed Computing, Fall 2026
+Milestone 2 (Communication). Milestone 1 (Architecture) is tagged `m1`.
 
 Group: Lawrence Degoma, Christopher Gonzalez-Morales, Hasan Karakra, Bertrand Lee,
 Omar Lopez, Hong Nguyen, Marco Ocegueda
 
-- Live demo (nothing to install): https://cecs327-smart-parking.netlify.app
+- Browser demo of the Milestone 1 system: https://cecs327-smart-parking.netlify.app
 - Architecture diagram: [`docs/architecture.png`](docs/architecture.png)
+- Message reference with real examples: [`docs/MESSAGES.md`](docs/MESSAGES.md)
 - Project plan for all milestones: [`docs/PLAN.md`](docs/PLAN.md)
 
 ## What it is
@@ -14,13 +16,35 @@ Omar Lopez, Hong Nguyen, Marco Ocegueda
 A campus has two parking lots with 20 spaces each. We track whether each space is
 free, occupied or reserved, and let drivers find and reserve a space.
 
-There are three kinds of process:
+Processes:
 
 | Process | Count | Job |
 |---|---|---|
-| `sensor_node.py` | one per lot | simulates the occupancy sensors, pushes `event`s and a `heartbeat` snapshot every 2 s |
-| `lot_server.py` | one per lot | owns the state of its lot's spaces, answers clients, swaps summaries with the other lot server |
-| `client.py` | one per command | the driver app: `find`, `reserve`, `release` |
+| `registry.py` | 1 | group membership: which lot servers exist (JOIN / LEAVE / MEMBERS) |
+| `broker.py` | 1 | pub-sub broker: routes PUBLISH to the subscribers of a topic |
+| `sensor_node.py` | one per lot | simulates the occupancy sensors, publishes `event`s and a `heartbeat` snapshot every 2 s to `lot/<lot>/sensor` |
+| `lot_server.py` | one per lot | owns the state of its lot's spaces, answers clients, publishes changes to `lot/<lot>/status`, sends its summary to the `lot_servers` group |
+| `client.py` | one per command | the driver app: `find`, `reserve`, `release`, `watch` |
+
+## How they talk (Milestone 2)
+
+Everything is JSON over TCP. One message = a 4-byte big-endian length, then the
+JSON body in UTF-8 (`prototype/comm/framing.py`). Every message carries the same
+envelope: `type`, `msg_id`, `sender`, `timestamp` (ISO 8601, ms), `reply_to`, `payload`
+(`prototype/comm/envelope.py`). Three patterns are built on that:
+
+| Pattern | Module | Used for | Connection |
+|---|---|---|---|
+| request-reply | `comm/request_reply.py` | client -> lot server (`find`, `reserve`, `release`) | one per request: open, REQUEST, REPLY, close |
+| publish-subscribe | `comm/pubsub.py` + `broker.py` | sensor -> lot server (`lot/<lot>/sensor`), lot server -> watchers (`lot/<lot>/status`) | subscriber keeps one long-lived connection to the broker; publisher reuses one |
+| group communication | `comm/group.py` + `registry.py` | lot server -> all lot servers (summaries) | ask the registry for MEMBERS, then one new connection per member |
+
+Errors a service answers with `status: ERROR`: unknown operation, bad arguments,
+handler crash. If there is no reply at all the client retries with the same `msg_id`
+(the service caches replies, so a retry can't run twice) and gives up after 3 tries.
+The broker drops a subscriber it can't deliver to; `group_send` logs and skips a member
+it can't reach and still delivers to the rest. See `docs/MESSAGES.md` for every message
+type with a real example.
 
 Rules that matter:
 
@@ -38,9 +62,9 @@ Rules that matter:
 - The two lot servers send each other a summary every 3 s. If a summary is more than
   9 s old the client is told the other lot's numbers are stale.
 
-The same system also runs in the browser (`web/`): each process is a Web Worker and the
-page acts as the network between them, so you can kill processes, cut links and add
-latency while watching the lots. That is what the video uses.
+The browser demo in `web/` is the Milestone 1 version of the system (direct
+connections, no broker or registry). It is still useful for showing the lot state and
+the failure cases visually, but it does not model the M2 communication patterns.
 
 ## Requirements
 
@@ -66,12 +90,18 @@ All commands run from `prototype/`. Each one is its own process, so use one term
 per process. Lot A listens on port 5001 and lot B on 5002 (`LOT_PORTS` in `common.py`).
 
 ```
-python3 lot_server.py --lot A
-python3 lot_server.py --lot B
-python3 sensor_node.py --lot A
+python3 registry.py                 # port 5010
+python3 broker.py                   # port 5000
+python3 lot_server.py --lot A       # port 5001, subscribes to lot/A/sensor, joins lot_servers
+python3 lot_server.py --lot B       # port 5002
+python3 sensor_node.py --lot A      # publishes to lot/A/sensor
 python3 sensor_node.py --lot B
 python3 client.py find
+python3 client.py watch A           # prints every status EVENT for lot A until Ctrl-C
 ```
+
+Start order matters only a little: a lot server retries JOIN until the registry is up,
+and subscribers/publishers reconnect to the broker every second until it is up.
 
 Or start everything in the background at once:
 
@@ -88,7 +118,8 @@ Useful options:
 
 ```
 python3 lot_server.py --lot A --fresh            # ignore the old log
-python3 lot_server.py --lot C --port 5003 --peer A=127.0.0.1:5001    # a third lot
+python3 lot_server.py --lot C --port 5003        # a third lot: just joins the group, nobody needs reconfiguring
+python3 lot_server.py --lot A --broker 10.0.0.5:5000 --registry 10.0.0.5:5010   # broker/registry elsewhere
 python3 sensor_node.py --lot A --drop-rate 0.3   # drop 30% of events
 python3 sensor_node.py --lot A --seed 1          # same random pattern every run
 python3 client.py --id alice reserve A-03
@@ -106,11 +137,14 @@ cd prototype
 python3 client.py find                       # -> OK Lot A: 14 free ... plus Lot B's summary
 python3 client.py --id alice reserve A-03    # -> OK reserved (lease 30s)
 python3 client.py --id bob reserve A-03      # -> DENIED reserved
-python3 client.py --id alice release A-03    # -> OK released
-tail -n 5 logs/lot_server_A.log              # the message log
+python3 client.py --id bob reserve Z-99      # -> ERROR no such space (bad argument)
+python3 client.py watch A &                  # second terminal: live EVENTs from the broker
+python3 client.py --id alice release A-03    # -> OK released; the watcher prints "A-03 -> free"
+tail -n 5 logs/broker.log                    # the broker's message log
 kill $(cat run/sensor_node_A.pid)            # wait 6 s, Lot A goes unknown
-kill $(cat run/lot_server_A.pid)
-python3 lot_server.py --lot A                # prints RECOVERY: replayed N entries
+kill $(cat run/lot_server_B.pid)             # A logs "member unreachable, skipped"; B's summary goes STALE
+kill $(cat run/broker.pid)                   # sensors can't publish; Lot A goes unknown
+python3 broker.py                            # everyone reconnects and re-subscribes
 ./run_demo.sh stop
 ```
 
@@ -123,39 +157,40 @@ messages. "download all logs" saves every process's log as one `.jsonl` file.
 
 ```
 cd prototype
-python3 tests/run_tests.py        # all five scenarios, about 45 s
-python3 tests/run_tests.py 3 4    # just 3 and 4
+python3 tests/test_framing.py     # framing + envelope, no network, < 1 s
+python3 tests/test_comm.py        # the three patterns in-process over real sockets, ~5 s
+python3 tests/run_tests.py        # whole system, seven scenarios, about 80 s
+python3 tests/run_tests.py 6 7    # just 6 and 7
 ```
+
+`test_framing.py`: round trip, two messages in one TCP write, a message delivered in
+7-byte pieces, malformed JSON, absurd length header, peer closing mid-message.
+
+`test_comm.py`: request-reply (OK, unknown op, bad args, lost reply + retry, service
+down), pub-sub (two subscribers each get a copy, topic routing, no subscribers,
+unsubscribe, dead subscriber removed, one log line per delivery), group (JOIN/MEMBERS,
+fan-out to the other members, one log line per target, dead member skipped, LEAVE).
+
+`run_tests.py` scenarios:
 
 | # | Scenario | Checks |
 |---|---|---|
-| 1 | request / response | `find` lists free spaces; alice `reserve` OK; bob `reserve` same space DENIED; bob `release` DENIED; alice `release` OK; server log has the request and the reply |
-| 2 | lost reply | client drops the first reply, retries with the same `req_id`; server answers `duplicate: true`; the log shows one `req_id` twice and there is one reservation |
-| 3 | sensor crash | kill the sensor, wait more than 6 s: all 20 spaces `unknown`, `find` returns none, total is still 20 |
-| 4 | server crash | dave reserves; kill lot server A; client gets no reply; restart A; console shows `RECOVERY`; erin's `reserve` of the same space is DENIED because the lease survived |
-| 5 | peer failure | A reports B's summary as fresh; kill B; after 9 s A still answers and marks B `stale` |
+| 1 | request-reply | `find` lists free spaces; alice `reserve` OK; bob same space DENIED; bob `release` DENIED; alice `release` OK; `Z-99` -> `status: ERROR`; server log has REQUEST/REPLY pairs linked by `reply_to` |
+| 2 | lost reply | client drops the first reply, retries with the same `msg_id`; server answers `duplicate: true`; log shows one `msg_id` twice, one reservation |
+| 3 | sensor crash | kill the sensor, wait > 6 s: all 20 spaces `unknown`, `find` returns none |
+| 4 | server crash | dave reserves; kill lot server A; client gets no reply; restart A; `RECOVERY` in console; erin's `reserve` of that space DENIED because the lease survived |
+| 5 | group / peer failure | A learned about B through GROUP_MSG; A's log has one send line per member; registry logged both JOINs; kill B: A still answers, marks B `stale`, logs "member unreachable, skipped" |
+| 6 | broker crash | kill the broker: sensors can't publish, Lot A goes all `unknown`, but request-reply still works; restart the broker: lot server re-SUBSCRIBEs, sensor republishes, lot recovers |
+| 7 | status watch | a `client.py watch A` process receives the reserved/free EVENTs the lot server publishes; broker log has one send line per delivery |
 
-Process output from the run is in `tests/out/`. Logs and output from one of our runs are
-in `docs/sample_logs/`, screenshots of the web demo in `docs/screenshots/`.
+Process output from the run is in `tests/out/`. Logs and output from our runs are in
+`docs/sample_logs/` (M1) and `docs/sample_logs_m2/` (M2).
 
 ## Messages
 
-One JSON object per line over TCP.
-
-| From -> to | type | fields | reply |
-|---|---|---|---|
-| sensor -> lot server | `heartbeat` | `lot, seq, ts, spaces{id: free/occupied}` | none |
-| sensor -> lot server | `event` | `lot, seq, ts, space, state` | none |
-| client -> lot server | `find` | `req_id, client` | `reply{status, free[], lot_summary, other_lots}` |
-| client -> lot server | `reserve` | `req_id, client, space` | `reply{status, reason, lease}` |
-| client -> lot server | `release` | `req_id, client, space` | `reply{status, reason}` |
-| lot server -> lot server | `summary` | `lot, free, occupied, reserved, unknown, total` | `summary_ack{lot}` |
-
-A log line looks like this (`dir` is `send`, `recv` or `dropped`):
-
-```
-{"ts": 1790142788.814, "process": "lot_server_A", "dir": "recv", "peer": "127.0.0.1:43260", "msg": {"type": "heartbeat", "lot": "A", "seq": 1, "spaces": {"A-01": "free", "...": "..."}}}
-```
+See [`docs/MESSAGES.md`](docs/MESSAGES.md): the envelope, one real example of every
+message type (REQUEST, REPLY, SUBSCRIBE, ACK, PUBLISH, EVENT, UNSUBSCRIBE, JOIN, MEMBERS,
+GROUP_MSG, LEAVE), the payload of each, the topics and groups, and the log line format.
 
 ## Layout
 
@@ -164,17 +199,29 @@ README.md
 netlify.toml                publishes web/
 docs/
   PLAN.md                   plan for all five milestones
+  MESSAGES.md               message reference with real examples
   architecture.svg/.png     diagram for the report
-  sample_logs/              logs + console output from a run
+  sample_logs/              M1 logs, sample_logs_m2/ M2 logs
   screenshots/
 prototype/
-  common.py                 wire format, MessageLog, timing constants
+  common.py                 ports, topics, timing constants, MessageLog
+  comm/
+    framing.py              length-prefixed JSON over TCP
+    envelope.py             the common message fields
+    request_reply.py        call() and Service
+    pubsub.py               Broker, Subscriber, Publisher
+    group.py                Registry, join/leave/members, group_send
+  registry.py               the registry process
+  broker.py                 the broker process
   lot_server.py
   sensor_node.py
   client.py
   run_demo.sh
-  tests/run_tests.py
-web/
+  tests/
+    test_framing.py         unit tests, no network
+    test_comm.py            the three patterns over real sockets
+    run_tests.py            whole-system scenarios
+web/                        Milestone 1 browser demo
   index.html, style.css
   js/                       config, network router, ui, diagram, scenarios, main
   workers/                  sensor_node.js, lot_server.js, client.js
