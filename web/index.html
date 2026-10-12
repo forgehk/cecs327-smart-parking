@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Distributed Smart Parking - CECS 327</title>
+  <title>Distributed Smart Parking, CECS 327</title>
   <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) and Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication).">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,8 +16,8 @@
   <div class="brand">Distributed Smart Parking <span>CECS 327</span></div>
   <nav class="tabs" id="tabs">
     <a href="#overview">Overview</a>
-    <a href="#milestone-1">Milestone 1 · demo</a>
-    <a href="#milestone-2">Milestone 2 · communication</a>
+    <a href="#milestone-1">Milestone 1</a>
+    <a href="#milestone-2">Milestone 2</a>
   </nav>
   <div class="top-actions">
     <button class="sm" id="btnReset" title="Restart every process, clear reservations and the log (R)">Reset demo</button>
@@ -30,9 +30,8 @@
   <div class="wrap">
     <h1>Distributed Smart Parking</h1>
     <p class="lede">
-      Parking sensors, lot servers and a driver app running as separate processes that only talk by sending messages.
-      Each lot server owns its own lot; there is no central coordinator. The system keeps answering when a sensor dies,
-      a server crashes, a link is cut or a reply gets lost, and every message is logged so you can see what happened.
+      Parking sensors, lot servers and a driver app, each a separate process that only communicates by messages.
+      Each lot server owns one lot. There is no central coordinator. Processes can be killed, links cut and replies lost; the rest keeps working.
     </p>
     <p class="team"><b>Team:</b> Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda</p>
 
@@ -41,18 +40,18 @@
     <div class="try" id="try">
       <div class="card" data-scen="1">
         <h3>Two drivers, one space</h3>
-        <p>alice reserves a space, bob tries the same one and gets DENIED. One request-reply at a time per lot server.</p>
-        <div class="go">Run scenario 1 →</div>
+        <p>alice reserves a space. bob asks for the same one and is denied.</p>
+        <div class="go">Run scenario 1</div>
       </div>
       <div class="card" data-scen="3">
         <h3>Kill a sensor</h3>
-        <p>The lot server hears nothing. After 6 s of silence its spaces become unknown, never free.</p>
-        <div class="go">Run scenario 3 →</div>
+        <p>After 6 s without a report the lot server marks the spaces unknown, not free.</p>
+        <div class="go">Run scenario 3</div>
       </div>
       <div class="card" data-scen="4">
         <h3>Crash a lot server</h3>
-        <p>Its memory is gone. On restart it replays its log and the reservation made before the crash is still there.</p>
-        <div class="go">Run scenario 4 →</div>
+        <p>On restart it replays its log. A reservation made before the crash is still there.</p>
+        <div class="go">Run scenario 4</div>
       </div>
     </div>
   </div>
@@ -65,16 +64,16 @@
       <div>
         <div class="kicker">Milestone 1</div>
         <h2>Live demo</h2>
-        <p>Five processes run in this page as Web Workers with their own memory. The page only plays the network: it adds latency, drops messages and cuts links. Click a process in the diagram to crash or restart it, click a link to cut it, click a space to act on it.</p>
+        <p>Five processes run in this page as Web Workers. The page acts as the network: it adds latency, drops messages and cuts links. Click a process to crash it, a link to cut it, a space to reserve it.</p>
       </div>
-      <div class="links"><a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype">Python version with real TCP sockets →</a></div>
+      <div class="links"><a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype">Python version (TCP sockets)</a></div>
     </div>
 
     <div class="grid-m1">
 
       <div class="card area-arch">
         <div class="card-head"><h3>Architecture</h3><span class="r" id="msgcount">0 msgs</span></div>
-        <div class="card-sub">Click a process to crash / restart it. Click a link to cut / restore it.</div>
+        <div class="card-sub">Click a process to crash or restart it. Click a link to cut or restore it.</div>
         <svg id="diagram" viewBox="0 0 560 345" role="img"
              aria-label="Two sensor nodes push to two lot servers, which exchange summaries as peers; the client talks to either lot server."></svg>
         <div class="net-legend">
@@ -94,20 +93,20 @@
       <div class="card area-lotB" id="lotB"></div>
 
       <div class="card area-scen">
-        <div class="card-head"><h3>Scenarios</h3><span class="r">keys 1–5</span></div>
-        <div class="card-sub">Each one drives the system through the same controls and explains what to watch.</div>
+        <div class="card-head"><h3>Scenarios</h3><span class="r">keys 1 to 5</span></div>
+        <div class="card-sub">Scripted runs of the fault cases from the report.</div>
         <div class="scen-list" id="scen"></div>
         <div class="runner" id="runner" hidden>
           <div class="runner-head"><span>Running <b id="runnerTitle"></b></span><button class="sm" id="btnStop">Stop</button></div>
           <div class="steps" id="steps"></div>
         </div>
         <div class="reply" id="reply"><span class="lbl">last client reply</span>-</div>
-        <div class="keys"><kbd>1</kbd>–<kbd>5</kbd> run scenario · <kbd>R</kbd> reset · <kbd>/</kbd> search log · <kbd>Esc</kbd> clear selection</div>
+        <div class="keys"><kbd>1</kbd> to <kbd>5</kbd> run a scenario, <kbd>R</kbd> reset, <kbd>/</kbd> search the log, <kbd>Esc</kbd> deselect</div>
       </div>
 
       <div class="card area-log">
         <div class="card-head"><h3>Message log</h3><span class="r"><span id="logcount">0 rows</span></span></div>
-        <div class="card-sub">Every message the network carries, plus each process's console. Click a row to see the full message. Auto-scroll pauses while your pointer is over the log.</div>
+        <div class="card-sub">Every message on the network plus each process's console output. Click a row for the full message.</div>
         <div class="log-tools">
           <input type="search" id="logq" placeholder="search (space id, driver, req id, word)…">
           <div class="chips" id="chips"></div>
@@ -124,7 +123,7 @@
         </div>
         <div class="log-foot">
           <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
-          <span>heartbeat 2 s · Δ = 6 s · peer summary 3 s (stale 9 s) · lease 30 s · client timeout 2 s × 3</span>
+          <span>heartbeat 2 s, staleness 6 s, peer summary every 3 s (stale after 9 s), lease 30 s, client timeout 2 s with 3 retries</span>
         </div>
       </div>
 
@@ -139,12 +138,12 @@
       <div>
         <div class="kicker">Milestone 2</div>
         <h2>Communication</h2>
-        <p>The simple messages above are replaced with a real communication layer: TCP sockets, every message a JSON envelope sent as a 4-byte length header plus UTF-8 body, and three patterns — request-reply, publish-subscribe and group communication. Two new processes appear: a broker and a registry. Every process logs every message; a crashed lot server replays its log.</p>
+        <p>TCP sockets, one JSON envelope for every message (4-byte length header, UTF-8 body), and three patterns: request-reply, publish-subscribe and group communication. Two new processes: a broker and a registry.</p>
       </div>
       <div class="links">
-        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/comm">prototype/comm</a> ·
-        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">MESSAGES.md</a> ·
-        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/tests">tests</a> ·
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/comm">prototype/comm</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">MESSAGES.md</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/tests">tests</a> &nbsp;
         <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/docs/sample_logs_m2">sample logs</a>
       </div>
     </div>
@@ -165,7 +164,7 @@
       <div class="viewer-side">
         <div class="vtext on" data-v="model">
           <h3>Who connects to whom</h3>
-          <p>Every arrow is a TCP connection carrying framed JSON. Solid links stay open, dashed ones are opened on demand. A lot server plays four roles at once: service to clients, subscriber and publisher at the broker, and member of the <code>lot_servers</code> group.</p>
+          <p>Each arrow is a TCP connection. Solid ones stay open, dashed ones are opened when needed. A lot server is a service to clients, a subscriber and publisher at the broker, and a member of the <code>lot_servers</code> group.</p>
           <div class="m2legend">
             <span><i style="background:#34d399"></i>sensor node</span>
             <span><i style="background:#a78bfa"></i>broker :5000</span>
@@ -176,21 +175,21 @@
         </div>
         <div class="vtext" data-v="rr">
           <h3>One exchange per connection</h3>
-          <p>Open, REQUEST, REPLY, close. The REPLY echoes the request's <code>msg_id</code> in <code>reply_to</code>. If no reply arrives within 2 s the client reconnects and resends the same REQUEST. The service caches replies by <code>msg_id</code>, so the retry gets the cached answer and the reservation is never made twice.</p>
-          <p style="margin-top:8px">Failure cases: unknown op or bad args → <code>status: ERROR</code>; no reply after 3 tries → <code>ServiceUnavailable</code>, logged.</p>
+          <p>Connect, REQUEST, REPLY, close. The REPLY carries the request's <code>msg_id</code> in <code>reply_to</code>. If nothing comes back in 2 s the client reconnects and sends the same REQUEST again. The service caches replies by <code>msg_id</code>, so the retry gets the cached reply and nothing runs twice.</p>
+          <p style="margin-top:8px">Unknown op or bad args: <code>status: ERROR</code>. No reply after 3 tries: <code>ServiceUnavailable</code>, written to the log.</p>
         </div>
         <div class="vtext" data-v="ps">
           <h3>Broker in the middle</h3>
-          <p>Subscribers keep one long-lived connection to the broker. A PUBLISH is fanned out as one EVENT per subscriber on that subscriber's own connection, one log line per delivery. The publisher gets an ACK with how many subscribers were reached. A subscriber the broker can't deliver to is dropped from the topic rather than retried.</p>
-          <p style="margin-top:8px">Limits: the broker is a single point of failure; a slow subscriber can delay the others.</p>
+          <p>Subscribers keep one long-lived connection to the broker. A PUBLISH becomes one EVENT per subscriber, sent on that subscriber's connection and logged once per delivery. The publisher gets an ACK with the delivered count. A subscriber that cannot be reached is removed from the topic.</p>
+          <p style="margin-top:8px">Limits: the broker is a single point of failure, and a slow subscriber delays the others.</p>
         </div>
         <div class="vtext" data-v="grp">
           <h3>Membership at the registry</h3>
-          <p>Members JOIN a group at the registry. To send, the sender asks for MEMBERS, then opens one connection per member and sends GROUP_MSG, logging one line per target. An unreachable member is logged and skipped; the others still get the message.</p>
-          <p style="margin-top:8px">No ordering or atomic delivery is guaranteed, and membership can change during a send. Future work: total ordering, acknowledgements, multicast.</p>
+          <p>Members JOIN a group at the registry. To send, a node asks for MEMBERS, then opens one connection per member and sends GROUP_MSG, one log line per target. An unreachable member is logged and skipped. The others still get the message.</p>
+          <p style="margin-top:8px">No ordering or atomic delivery. Membership can change during a send. Future work: total ordering, acknowledgements, multicast.</p>
         </div>
         <div class="dl">
-          <button class="primary sm" id="btnDl">Download this diagram (PNG)</button>
+          <button class="primary sm" id="btnDl">Download PNG</button>
         </div>
       </div>
     </div>
@@ -198,7 +197,7 @@
     <div class="grid-m2">
       <div class="card">
         <div class="card-head"><h3>Message envelope</h3></div>
-        <div class="card-sub">Every message, in every pattern, is a JSON object with these fields, sent as a 4-byte big-endian length followed by the UTF-8 body (<code>struct.pack("!I", len)</code>).</div>
+        <div class="card-sub">Every message is a JSON object with these fields, sent as a 4-byte big-endian length followed by the UTF-8 body.</div>
         <table class="plain">
           <tr><th>field</th><th>meaning</th></tr>
           <tr><td><code>type</code></td><td>which kind of message; the receiver dispatches on it</td></tr>
@@ -207,11 +206,11 @@
           <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's clock, used as ordering evidence</td></tr>
           <tr><td><code>payload</code></td><td>type-specific data</td></tr>
         </table>
-        <div class="card-foot">Malformed input: a bad length header, a truncated body or non-JSON bytes raise <code>ProtocolError</code> and the connection is closed; a closed socket mid-read raises <code>ConnectionClosed</code>. Max message size 1 MB.</div>
+        <div class="card-foot">A bad length header, truncated body or non-JSON bytes raise <code>ProtocolError</code> and the connection is closed. A socket closed mid-read raises <code>ConnectionClosed</code>. Max message size 1 MB.</div>
       </div>
       <div class="card">
-        <div class="card-head"><h3>Message types</h3><span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">real example of each →</a></span></div>
-        <div class="card-sub">Eleven types across the three patterns.</div>
+        <div class="card-head"><h3>Message types</h3><span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">examples in MESSAGES.md</a></span></div>
+        <div class="card-sub">Eleven message types across the three patterns.</div>
         <div class="types">
           <div class="type"><b>REQUEST</b><span class="pat">request-reply</span><p>op + args from a client to a service</p></div>
           <div class="type"><b>REPLY</b><span class="pat">request-reply</span><p>status OK / ERROR, result or error text, reply_to</p></div>
@@ -219,18 +218,18 @@
           <div class="type"><b>UNSUBSCRIBE</b><span class="pat">pub-sub</span><p>subscriber leaves a topic</p></div>
           <div class="type"><b>PUBLISH</b><span class="pat">pub-sub</span><p>publisher sends topic + data to the broker</p></div>
           <div class="type"><b>EVENT</b><span class="pat">pub-sub</span><p>broker delivers a publish to one subscriber</p></div>
-          <div class="type"><b>ACK</b><span class="pat">pub-sub · group</span><p>broker / registry acknowledgement, carries delivered count or members</p></div>
+          <div class="type"><b>ACK</b><span class="pat">pub-sub, group</span><p>broker / registry acknowledgement, carries delivered count or members</p></div>
           <div class="type"><b>JOIN</b><span class="pat">group</span><p>node joins a group with its address</p></div>
           <div class="type"><b>LEAVE</b><span class="pat">group</span><p>node leaves a group</p></div>
           <div class="type"><b>MEMBERS</b><span class="pat">group</span><p>ask the registry who is in a group</p></div>
-          <div class="type"><b>GROUP_MSG</b><span class="pat">group</span><p>sender → each member, one connection per member</p></div>
+          <div class="type"><b>GROUP_MSG</b><span class="pat">group</span><p>sender to each member, one connection each</p></div>
         </div>
       </div>
     </div>
 
     <div class="card" style="margin-top:14px">
       <div class="card-head"><h3>Browser demo vs Python prototype</h3></div>
-      <div class="card-sub">The demo above is a simulation so it can run in a web page. The graded code is the Python prototype.</div>
+      <div class="card-sub">The browser demo is a simulation. The Python prototype is the real implementation.</div>
       <table class="plain">
         <tr><th></th><th>Browser demo (this page)</th><th>Python prototype (<code>prototype/</code>)</th></tr>
         <tr><td>processes</td><td>Web Workers, separate memory</td><td>OS processes, one per node</td></tr>
@@ -245,8 +244,7 @@
 </section>
 
 <footer>
-  CECS 327 · Distributed Smart Parking · the Python version in <code>prototype/</code> uses the same rules over real TCP sockets ·
-  <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
+  CECS 327, Distributed Smart Parking. <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
 </footer>
 
 <div id="toast"></div>
