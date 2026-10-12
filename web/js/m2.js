@@ -1,6 +1,7 @@
-// Milestone 2: communication model and sequence diagrams (drawn into the #milestone-2 section)
+// Milestone 2: communication model and sequence diagrams, drawn into the
+// tabbed viewer in the #milestone-2 section. Colours come from CSS variables
+// on .m2svg so the same drawing renders dark on the page and light in the PNG.
 (function () {
-const C = { client: "#ca8a04", server: "#1d4ed8", sensor: "#059669", broker: "#7c3aed", registry: "#dc2626" };
 const NS = "http://www.w3.org/2000/svg";
 function el(tag, attrs, text) {
   const e = document.createElementNS(NS, tag);
@@ -8,11 +9,17 @@ function el(tag, attrs, text) {
   if (text !== undefined) e.textContent = text;
   return e;
 }
+function markers() {
+  const defs = el("defs", {});
+  defs.innerHTML =
+    '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="arrowhead" d="M0 0L10 5L0 10z"/></marker>' +
+    '<marker id="arrowfail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path class="arrowhead fail" d="M0 0L10 5L0 10z"/></marker>';
+  return defs;
+}
 
 // ---- sequence diagram renderer ----
-// actors: [{id, label, sub, color}]
+// actors: [{id, label, sub, role}]
 // steps:  {from,to,label,sub,dashed,fail} | {note, at, text, w, side} | {gap}
-// the viewBox height is set to fit the steps.
 function sequence(svgId, actors, steps, opts) {
   const svg = document.getElementById(svgId);
   const W = 1000, margin = 120;
@@ -56,17 +63,13 @@ function sequence(svgId, actors, steps, opts) {
   }
   const H = y + 10;
   svg.setAttribute("viewBox", "0 0 " + W + " " + H);
-
-  const defs = el("defs", {});
-  defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#334155"/></marker>' +
-    '<marker id="arrowfail" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#dc2626"/></marker>';
-  svg.appendChild(defs);
+  svg.appendChild(markers());
   actors.forEach(a => svg.appendChild(el("line", { class: "lifeline", x1: x[a.id], y1: top, x2: x[a.id], y2: H - 10 })));
   actors.forEach(a => {
-    const g = el("g", { class: "actor" });
-    g.appendChild(el("rect", { x: x[a.id] - 85, y: 18, width: 170, height: 44, stroke: a.color }));
-    g.appendChild(el("text", { x: x[a.id], y: 38, fill: a.color }, a.label));
-    if (a.sub) g.appendChild(el("text", { x: x[a.id], y: 54, fill: "#5b6680", style: "font-size:10.5px;font-weight:400" }, a.sub));
+    const g = el("g", { class: "actor role-" + a.role });
+    g.appendChild(el("rect", { x: x[a.id] - 85, y: 18, width: 170, height: 44 }));
+    g.appendChild(el("text", { x: x[a.id], y: 38 }, a.label));
+    if (a.sub) g.appendChild(el("text", { class: "sub", x: x[a.id], y: 54 }, a.sub));
     svg.appendChild(g);
   });
   svg.appendChild(body);
@@ -75,69 +78,63 @@ function sequence(svgId, actors, steps, opts) {
 // ---- communication model ----
 function model() {
   const svg = document.getElementById("model");
-  const box = (x, y, w, h, color, title, lines) => {
-    const g = el("g", { class: "actor" });
-    g.appendChild(el("rect", { x, y, width: w, height: h, stroke: color }));
-    g.appendChild(el("text", { x: x + w / 2, y: y + 20, fill: color }, title));
-    lines.forEach((t, i) => g.appendChild(el("text", { x: x + w / 2, y: y + 36 + i * 13, fill: "#5b6680", style: "font-size:10.5px;font-weight:400" }, t)));
+  const box = (x, y, w, h, role, title, lines) => {
+    const g = el("g", { class: "actor role-" + role });
+    g.appendChild(el("rect", { x, y, width: w, height: h }));
+    g.appendChild(el("text", { x: x + w / 2, y: y + 20 }, title));
+    lines.forEach((t, i) => g.appendChild(el("text", { class: "sub", x: x + w / 2, y: y + 36 + i * 13 }, t)));
     svg.appendChild(g);
   };
   const label = (g, lx, ly, text) => {
     const w = text.length * 6.6 + 8;
-    g.appendChild(el("rect", { x: lx - w / 2, y: ly - 11, width: w, height: 15, fill: "#fff", rx: 3 }));
-    g.appendChild(el("text", { x: lx, y: ly, style: "font-size:10.5px" }, text));
+    g.appendChild(el("rect", { class: "lblbg", x: lx - w / 2, y: ly - 11, width: w, height: 15, rx: 3 }));
+    g.appendChild(el("text", { class: "lbl", x: lx, y: ly }, text));
   };
-  const arrow = (x1, y1, x2, y2, text, color, both, dashed, lx, ly) => {
-    const g = el("g", { class: "msg" + (dashed ? " dashed" : "") });
-    const l = el("line", { x1, y1, x2, y2, stroke: color, "marker-end": "url(#arrow)" });
+  const arrow = (x1, y1, x2, y2, text, role, both, dashed, lx, ly) => {
+    const g = el("g", { class: "msg role-" + role + (dashed ? " dashed" : "") });
+    const l = el("line", { x1, y1, x2, y2, "marker-end": "url(#arrow)" });
     if (both) l.setAttribute("marker-start", "url(#arrow)");
     g.appendChild(l);
     if (text) label(g, lx !== undefined ? lx : (x1 + x2) / 2, ly !== undefined ? ly : (y1 + y2) / 2 - 6, text);
     svg.appendChild(g);
   };
-  const path = (d, text, color, dashed, lx, ly) => {
-    const g = el("g", { class: "msg" + (dashed ? " dashed" : "") });
-    g.appendChild(el("path", { d, stroke: color, "marker-end": "url(#arrow)" }));
+  const path = (d, text, role, dashed, lx, ly) => {
+    const g = el("g", { class: "msg role-" + role + (dashed ? " dashed" : "") });
+    g.appendChild(el("path", { d, "marker-end": "url(#arrow)" }));
     if (text) label(g, lx, ly, text);
     svg.appendChild(g);
   };
-  const defs = el("defs", {});
-  defs.innerHTML = '<marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#334155"/></marker>';
-  svg.appendChild(defs);
+  svg.appendChild(markers());
 
-  box(40, 40, 170, 64, C.sensor, "sensor node A", ["publisher", "lot/A/sensor"]);
-  box(790, 40, 170, 64, C.sensor, "sensor node B", ["publisher", "lot/B/sensor"]);
-  box(400, 40, 200, 64, C.broker, "broker  :5000", ["topic -> subscribers", "PUBLISH -> EVENT"]);
-  box(40, 220, 190, 80, C.server, "lot server A  :5001", ["service: find/reserve/release", "subscriber: lot/A/sensor", "publisher: lot/A/status"]);
-  box(770, 220, 190, 80, C.server, "lot server B  :5002", ["service: find/reserve/release", "subscriber: lot/B/sensor", "publisher: lot/B/status"]);
-  box(400, 340, 200, 60, C.registry, "registry  :5010", ["group lot_servers", "JOIN / LEAVE / MEMBERS"]);
-  box(400, 450, 200, 60, C.client, "client (driver app)", ["request-reply to a lot server", "watch: subscriber lot/<lot>/status"]);
+  box(40, 40, 170, 64, "sensor", "sensor node A", ["publisher", "lot/A/sensor"]);
+  box(790, 40, 170, 64, "sensor", "sensor node B", ["publisher", "lot/B/sensor"]);
+  box(400, 40, 200, 64, "broker", "broker  :5000", ["topic -> subscribers", "PUBLISH -> EVENT"]);
+  box(40, 220, 190, 80, "server", "lot server A  :5001", ["service: find/reserve/release", "subscriber: lot/A/sensor", "publisher: lot/A/status"]);
+  box(770, 220, 190, 80, "server", "lot server B  :5002", ["service: find/reserve/release", "subscriber: lot/B/sensor", "publisher: lot/B/status"]);
+  box(400, 340, 200, 60, "registry", "registry  :5010", ["group lot_servers", "JOIN / LEAVE / MEMBERS"]);
+  box(400, 450, 200, 60, "client", "client (driver app)", ["request-reply to a lot server", "watch: subscriber lot/<lot>/status"]);
 
-  // sensors -> broker
-  arrow(210, 72, 398, 72, "PUBLISH (pub-sub)", C.sensor);
-  arrow(790, 72, 602, 72, "PUBLISH (pub-sub)", C.sensor);
-  // broker -> lot servers (EVENT) and lot servers -> broker (PUBLISH status)
-  arrow(470, 104, 200, 218, "EVENT lot/A/sensor", C.broker, false, false, 370, 150);
-  arrow(530, 104, 800, 218, "EVENT lot/B/sensor", C.broker, false, false, 630, 150);
-  arrow(90, 220, 410, 106, "PUBLISH lot/A/status", C.server, false, true, 190, 200);
-  arrow(910, 220, 590, 106, "PUBLISH lot/B/status", C.server, false, true, 810, 200);
-  // group
-  arrow(230, 262, 770, 262, "GROUP_MSG summary (new connection per member)", "#334155", true, false, 500, 254);
-  arrow(230, 290, 398, 352, "JOIN / MEMBERS", C.registry, false, true, 300, 338);
-  arrow(770, 290, 602, 352, "JOIN / MEMBERS", C.registry, false, true, 700, 338);
-  // client
-  arrow(410, 452, 160, 302, "REQUEST / REPLY", C.client, true, false, 230, 400);
-  arrow(590, 452, 840, 302, "REQUEST / REPLY", C.client, true, false, 770, 400);
-  path("M 600 490 H 690 V 90 H 602", "SUBSCRIBE lot/<lot>/status (watch)", C.client, true, 690, 430);
-  svg.appendChild(el("text", { x: 500, y: 532, "text-anchor": "middle", style: "font-size:11px", fill: "#5b6680" },
+  arrow(210, 72, 398, 72, "PUBLISH (pub-sub)", "sensor");
+  arrow(790, 72, 602, 72, "PUBLISH (pub-sub)", "sensor");
+  arrow(470, 104, 200, 218, "EVENT lot/A/sensor", "broker", false, false, 370, 150);
+  arrow(530, 104, 800, 218, "EVENT lot/B/sensor", "broker", false, false, 630, 150);
+  arrow(90, 220, 410, 106, "PUBLISH lot/A/status", "server", false, true, 190, 200);
+  arrow(910, 220, 590, 106, "PUBLISH lot/B/status", "server", false, true, 810, 200);
+  arrow(230, 262, 770, 262, "GROUP_MSG summary (new connection per member)", "ink", true, false, 500, 254);
+  arrow(230, 290, 398, 352, "JOIN / MEMBERS", "registry", false, true, 300, 338);
+  arrow(770, 290, 602, 352, "JOIN / MEMBERS", "registry", false, true, 700, 338);
+  arrow(410, 452, 160, 302, "REQUEST / REPLY", "client", true, false, 230, 400);
+  arrow(590, 452, 840, 302, "REQUEST / REPLY", "client", true, false, 770, 400);
+  path("M 600 490 H 690 V 90 H 602", "SUBSCRIBE lot/<lot>/status (watch)", "client", true, 690, 430);
+  svg.appendChild(el("text", { class: "caption", x: 500, y: 532 },
     "all links: TCP, 4-byte length + JSON envelope · solid = always on · dashed = opened on demand"));
 }
 
 model();
 
 sequence("rr",
-  [{ id: "c", label: "client_alice", color: C.client, sub: "client.py reserve A-03" },
-   { id: "s", label: "lot_server_A :5001", color: C.server, sub: "Service, thread pool" }],
+  [{ id: "c", label: "client_alice", role: "client", sub: "client.py reserve A-03" },
+   { id: "s", label: "lot_server_A :5001", role: "server", sub: "Service, thread pool" }],
   [
     { from: "c", to: "s", label: "TCP connect", sub: "timeout 2 s" },
     { from: "c", to: "s", label: "REQUEST msg_id=9040cd5e {op: reserve, args: {...}}", sub: "args = {client: alice, space: A-03}" },
@@ -157,10 +154,10 @@ sequence("rr",
   ], { rowH: 40 });
 
 sequence("ps",
-  [{ id: "p", label: "sensor_node_A", color: C.sensor, sub: "publisher" },
-   { id: "b", label: "broker :5000", color: C.broker, sub: "topics -> subscribers" },
-   { id: "s1", label: "lot_server_A", color: C.server, sub: "subscriber (long-lived)" },
-   { id: "s2", label: "client_watcher", color: C.client, sub: "subscriber (long-lived)" }],
+  [{ id: "p", label: "sensor_node_A", role: "sensor", sub: "publisher" },
+   { id: "b", label: "broker :5000", role: "broker", sub: "topics -> subscribers" },
+   { id: "s1", label: "lot_server_A", role: "server", sub: "subscriber (long-lived)" },
+   { id: "s2", label: "client_watcher", role: "client", sub: "subscriber (long-lived)" }],
   [
     { from: "s1", to: "b", label: "SUBSCRIBE {topic: lot/A/sensor}" },
     { from: "b", to: "s1", label: "ACK" },
@@ -182,10 +179,10 @@ sequence("ps",
   ], { rowH: 36 });
 
 sequence("grp",
-  [{ id: "a", label: "lot_server_A", color: C.server, sub: "sender" },
-   { id: "r", label: "registry :5010", color: C.registry, sub: "group -> members" },
-   { id: "b", label: "lot_server_B", color: C.server, sub: "member" },
-   { id: "c", label: "lot_server_C", color: C.server, sub: "member (will crash)" }],
+  [{ id: "a", label: "lot_server_A", role: "server", sub: "sender" },
+   { id: "r", label: "registry :5010", role: "registry", sub: "group -> members" },
+   { id: "b", label: "lot_server_B", role: "server", sub: "member" },
+   { id: "c", label: "lot_server_C", role: "server", sub: "member (will crash)" }],
   [
     { from: "a", to: "r", label: "JOIN {group: lot_servers, address: 127.0.0.1:5001}" },
     { from: "r", to: "a", label: "ACK {members: [...]}" },
@@ -203,15 +200,37 @@ sequence("grp",
     { note: "a", text: "log: member 127.0.0.1:5003 unreachable, skipped\nsend still completed for B. C stays in the registry\n(it never sent LEAVE) until it is removed", w: 340 },
   ], { rowH: 36 });
 
-// ---- PNG download ----
-document.querySelectorAll("button[data-dl]").forEach(b => b.onclick = () => {
-  const svg = document.getElementById(b.dataset.dl);
+// ---- tabs ----
+let active = "model";
+const tabs = document.querySelectorAll("#vtabs button");
+tabs.forEach(b => b.onclick = () => {
+  active = b.dataset.v;
+  tabs.forEach(x => x.classList.toggle("on", x === b));
+  document.querySelectorAll(".vpane").forEach(p => p.classList.toggle("on", p.dataset.v === active));
+  document.querySelectorAll(".vtext").forEach(p => p.classList.toggle("on", p.dataset.v === active));
+});
+
+// ---- PNG export of the active diagram, light palette, 2x ----
+function diagramCss() {
+  let out = ".m2svg{--font:Inter,ui-sans-serif,system-ui,sans-serif;--mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace}\n";
+  for (const sheet of document.styleSheets) {
+    let rules;
+    try { rules = sheet.cssRules; } catch (e) { continue; }
+    for (const r of rules) if (r.selectorText && r.selectorText.indexOf(".m2svg") >= 0) out += r.cssText + "\n";
+  }
+  return out;
+}
+document.getElementById("btnDl").onclick = () => {
+  const svg = document.getElementById(active);
   const clone = svg.cloneNode(true);
-  const style = document.createElement("style");
-  style.textContent = Array.from(document.styleSheets[0].cssRules).map(r => r.cssText.replace(/#milestone-2 /g, "")).join("\n");
+  clone.classList.add("light");
+  const style = document.createElementNS(NS, "style");
+  style.textContent = diagramCss();
   clone.insertBefore(style, clone.firstChild);
   clone.setAttribute("xmlns", NS);
   const vb = svg.viewBox.baseVal;
+  clone.setAttribute("width", vb.width);
+  clone.setAttribute("height", vb.height);
   const data = new XMLSerializer().serializeToString(clone);
   const img = new Image();
   img.onload = () => {
@@ -221,10 +240,10 @@ document.querySelectorAll("button[data-dl]").forEach(b => b.onclick = () => {
     ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     const a = document.createElement("a");
-    a.download = "m2_" + b.dataset.dl + ".png";
+    a.download = "m2_" + active + ".png";
     a.href = canvas.toDataURL("image/png");
     a.click();
   };
   img.src = "data:image/svg+xml;charset=utf-8," + encodeURIComponent(data);
-});
+};
 })();

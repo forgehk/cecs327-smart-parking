@@ -36,3 +36,21 @@ function linkKey(a, b) {
 function $(sel) {
   return document.querySelector(sel);
 }
+
+// brief visual highlight on any element (used by scenarios to point at what they touch)
+function highlight(el) {
+  if (!el) return;
+  el.classList.remove("hl");
+  void el.getBoundingClientRect();
+  el.classList.add("hl");
+  setTimeout(function () { el.classList.remove("hl"); }, 2600);
+}
+
+let toastTimer = null;
+function toast(text, cls) {
+  const t = $("#toast");
+  t.textContent = text;
+  t.className = "show " + (cls || "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function () { t.className = ""; }, 3200);
+}

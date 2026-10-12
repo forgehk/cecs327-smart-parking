@@ -66,7 +66,8 @@ function netSend(from, to, msg) {
     from: from,
     to: to,
     type: msg.type,
-    detail: describeMsg(msg) + (dropped ? "  x " + dropped : ""),
+    detail: describeMsg(msg) + (dropped ? "  ✕ " + dropped : ""),
+    raw: msg,
   });
   animateDot(from, to, dropped ? "dropped" : kind);
   if (dropped) return;
@@ -143,11 +144,39 @@ function killProcess(name) {
 
 function setLink(key, up) {
   linkUp[key] = up;
-  document.getElementById("edge-" + key).classList.toggle("cut", !up);
+  const edge = document.getElementById("edge-" + key);
+  if (edge) edge.classList.toggle("cut", !up);
   logRow({
     cls: "console demo", from: "network", to: "", type: "link",
     detail: LINKS[key] + (up ? " restored" : " CUT, messages on it are dropped"),
   });
+}
+
+// full reset: every process restarted from scratch, logs on disk wiped, links restored
+function resetDemo() {
+  for (const n in PROCS) {
+    if (workers[n]) { workers[n].terminate(); delete workers[n]; }
+    disks[n] = [];
+  }
+  for (const l in lotState) delete lotState[l];
+  for (const l in truth) delete truth[l];
+  for (const k in LINKS) {
+    linkUp[k] = true;
+    const edge = document.getElementById("edge-" + k);
+    if (edge) edge.classList.remove("cut");
+  }
+  selectedSpace = null;
+  for (const l in recent) { recent[l] = []; lotLive[l] = false; }
+  for (const k in lastTileState) delete lastTileState[k];
+  msgCount = 0;
+  $("#msgcount").textContent = "0 msgs";
+  clearLog();
+  logRow({ cls: "console demo", from: "demo", to: "", type: "reset", detail: "reset: all processes restarted, disks wiped, links restored" });
+  ["lot_server_A", "lot_server_B", "sensor_node_A", "sensor_node_B", "client"].forEach(startProcess);
+  renderLot("A");
+  renderLot("B");
+  showReply({ text: "-", reply: null, neutral: true });
+  toast("Demo reset", "ok");
 }
 
 function downloadLogs() {

@@ -2,7 +2,6 @@
 
 drawDiagram();
 renderChips();
-renderLinks();
 renderScenarios();
 
 $("#latency").oninput = function (e) {
@@ -22,40 +21,46 @@ $("#omit").oninput = function (e) {
   });
 };
 
-$("#btnFindA").onclick = function () { request("find", null, false, "A"); };
-$("#btnFindB").onclick = function () { request("find", null, false, "B"); };
+$("#btnDownload").onclick = downloadLogs;
+$("#btnClear").onclick = clearLog;
+$("#btnReset").onclick = resetDemo;
 
-$("#btnReserve").onclick = function () {
-  const sid = selectedOrWarn();
-  if (sid) request("reserve", sid);
+$("#logq").oninput = function (e) {
+  logQuery = e.target.value.trim().toLowerCase();
+  applyLogFilters();
+};
+$("#logwrap").onmouseenter = function () { logPaused = true; $("#logwrap").classList.add("paused"); };
+$("#logwrap").onmouseleave = function () {
+  logPaused = false;
+  $("#logwrap").classList.remove("paused");
+  if ($("#autoscroll").checked) $("#logwrap").scrollTop = $("#logwrap").scrollHeight;
 };
 
-$("#btnRelease").onclick = function () {
-  const sid = selectedOrWarn();
-  if (sid) request("release", sid);
-};
-
-$("#btnLost").onclick = function () {
-  const sid = selectedOrWarn();
-  if (sid) request("reserve", sid, true);
-};
-
-$("#btnCar").onclick = function () {
-  const sid = selectedOrWarn();
-  if (!sid) return;
-  const w = workers["sensor_node_" + sid.split("-")[0]];
-  if (!w) {
-    showReply({ text: "that lot's sensor node is down, nothing can see the car", reply: null });
+// keyboard: 1-5 scenarios, R reset, / search, Esc clear selection
+document.addEventListener("keydown", function (e) {
+  const tag = (e.target.tagName || "").toLowerCase();
+  if (tag === "input" || tag === "select" || tag === "textarea") {
+    if (e.key === "Escape") e.target.blur();
     return;
   }
-  w.postMessage({ kind: "cmd", cmd: "toggle", space: sid });
-};
+  if (e.key >= "1" && e.key <= "5") runScenario(+e.key - 1);
+  else if (e.key === "r" || e.key === "R") resetDemo();
+  else if (e.key === "/") { e.preventDefault(); $("#logq").focus(); }
+  else if (e.key === "Escape") { selectedSpace = null; renderLot("A"); renderLot("B"); }
+});
 
-$("#btnDownload").onclick = downloadLogs;
-$("#btnClear").onclick = function () {
-  $("#log").innerHTML = "";
-  logRows = 0;
-};
+// active tab follows scroll position
+const sections = ["overview", "milestone-1", "milestone-2"].map(function (id) { return document.getElementById(id); });
+function updateTabs() {
+  const y = window.scrollY + 120;
+  let cur = sections[0];
+  sections.forEach(function (s) { if (s.offsetTop <= y) cur = s; });
+  $("#tabs").querySelectorAll("a").forEach(function (a) {
+    a.classList.toggle("on", a.getAttribute("href") === "#" + cur.id);
+  });
+}
+window.addEventListener("scroll", updateTabs, { passive: true });
+updateTabs();
 
 ["lot_server_A", "lot_server_B", "sensor_node_A", "sensor_node_B", "client"].forEach(startProcess);
 renderLot("A");
