@@ -47,7 +47,7 @@ function toggleProcess(name) {
 const STATE_ICON = { free: "", occupied: "🚗", reserved: "🔒", unknown: "?" };
 
 function tileMeta(sp) {
-  if (sp.state === "reserved") return sp.reserved_by + " · " + sp.lease_left + "s";
+  if (sp.state === "reserved") return sp.reserved_by + " " + sp.lease_left + "s";
   if (sp.state === "unknown") return sp.age === null ? "no report" : "silent " + sp.age + "s";
   return sp.age + "s ago";
 }
@@ -59,7 +59,7 @@ function renderLot(lot) {
 
   if (!s) {
     el.innerHTML = '<div class="card-head"><h3>Lot ' + lot + '</h3><span class="r" style="color:#fca5a5">server down</span></div>' +
-      '<div class="lot-down"><b>Lot server ' + lot + " is not running.</b><br>Clients get no reply for this lot; the other lot keeps working.<br><br>" +
+      '<div class="lot-down"><b>Lot server ' + lot + " is down.</b><br>Requests to this lot get no reply.<br><br>" +
       '<button class="ok sm" data-restart="' + serverName + '">restart lot server ' + lot + "</button></div>";
     el.querySelector("button").onclick = function () { toggleProcess(serverName); };
     return;
@@ -80,8 +80,8 @@ function renderLot(lot) {
     }
     lastTileState[sp.id] = sp.state;
     tiles += '<div class="tile ' + sp.state + (selectedSpace === sp.id ? " sel" : "") + (changed ? " changed" : "") + '" data-id="' + sp.id + '" title="' +
-      sp.id + ": " + sp.state + (sp.reserved_by ? " by " + sp.reserved_by : "") + (sp.age !== null ? " · sensor report " + sp.age + "s ago" : "") +
-      (tr[sp.id] === "occupied" ? " · car physically present" : "") + '">' +
+      sp.id + ": " + sp.state + (sp.reserved_by ? " by " + sp.reserved_by : "") + (sp.age !== null ? ", sensor report " + sp.age + "s ago" : "") +
+      (tr[sp.id] === "occupied" ? ", car present" : "") + '">' +
       '<span class="id">' + sp.id + '<span class="ico">' + STATE_ICON[sp.state] + "</span></span>" +
       '<span class="car ' + (tr[sp.id] === "occupied" ? "on" : "") + '"></span>' +
       '<span class="meta">' + tileMeta(sp) + "</span></div>";
@@ -90,8 +90,8 @@ function renderLot(lot) {
   let others = [];
   for (const l in s.peers) {
     const v = s.peers[l];
-    if (v.free === null) others.push("Lot " + l + ': <span class="stale">no summary yet / peer unreachable</span>');
-    else others.push("Lot " + l + " as told by its server: " + v.free + " free, " + v.unknown + " unknown · " + v.age + "s old " + (v.stale ? '<span class="stale">STALE</span>' : ""));
+    if (v.free === null) others.push("Lot " + l + ': <span class="stale">no summary yet</span>');
+    else others.push("Lot " + l + " (from its server): " + v.free + " free, " + v.unknown + " unknown, " + v.age + "s old " + (v.stale ? '<span class="stale">STALE</span>' : ""));
   }
 
   const mine = selectedSpace && selectedSpace.split("-")[0] === lot;
@@ -103,11 +103,11 @@ function renderLot(lot) {
       '<div class="row">' +
       '<button class="ok" data-act="reserve">reserve</button>' +
       '<button data-act="release">release</button>' +
-      '<button data-act="lost" title="Sends the request, ignores the first reply, then retries with the same req_id">reserve · simulate lost reply</button>' +
-      '<button data-act="car" title="Tell the sensor node a car arrived at / left this space">car arrives / leaves</button>' +
+      '<button data-act="lost" title="drop the first reply, retry with the same req_id">reserve with lost reply</button>' +
+      '<button data-act="car" title="toggle a car at this space">car arrives / leaves</button>' +
       "</div>";
   } else {
-    actions = '<div class="row"><span class="none">click a space to reserve, release or park a car</span></div>';
+    actions = '<div class="row"><span class="none">select a space</span></div>';
   }
 
   el.innerHTML =
@@ -118,7 +118,7 @@ function renderLot(lot) {
     '<span class="u"><b>' + sm.unknown + "</b>unknown</span></div>" +
     '<div class="grid">' + tiles + "</div>" +
     '<div class="lot-legend"><span class="f">free</span><span class="o">occupied</span><span class="r">reserved (lease)</span>' +
-    '<span class="u">unknown (silent &gt; Δ)</span><span class="c">car physically there</span></div>' +
+    '<span class="u">unknown</span><span class="c">car present</span></div>' +
     '<div class="peerview">' + others.join("<br>") + "</div>" +
     '<div class="actions">' + actions + "</div>" +
     '<div class="recent"><div class="lbl">recent changes</div>' + (recent[lot].length ? recent[lot].map(function (r) { return "<div>" + escapeHtml(r) + "</div>"; }).join("") : "<div class=\"none\">none yet</div>") + "</div>";
@@ -149,7 +149,7 @@ function renderLot(lot) {
 function toggleCar(sid) {
   const w = workers["sensor_node_" + sid.split("-")[0]];
   if (!w) {
-    showReply({ text: "that lot's sensor node is down, nothing can see the car", reply: null });
+    showReply({ text: "sensor node for that lot is down", reply: null });
     return;
   }
   w.postMessage({ kind: "cmd", cmd: "toggle", space: sid });
@@ -192,7 +192,7 @@ function request(op, space, simulateLost, lot) {
     kind: "cmd", cmd: "request", op: op, space: space || null,
     client: driver, lot: lot || "A", simulateLost: !!simulateLost, uiId: uiId,
   });
-  showReply({ text: driver + " → " + op + " " + (space || ("lot " + (lot || "A"))) + " … waiting for reply", reply: null, pending: true, neutral: true });
+  showReply({ text: driver + " → " + op + " " + (space || ("lot " + (lot || "A"))) + ", waiting for reply", reply: null, pending: true, neutral: true });
   return new Promise(function (resolve) { replyWaiters[uiId] = resolve; });
 }
 

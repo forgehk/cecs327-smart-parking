@@ -63,32 +63,32 @@ const SCENARIOS = [
   {
     title: "Request / response, one driver per space",
     steps: [
-      { text: "Client asks Lot A for its free spaces.", run: async function (c) { hlLot("A"); await request("find", null, false, "A"); await wait(600); } },
-      { text: "alice reserves the first free space. Expect OK with a 30 s lease.", run: async function (c) {
+      { text: "Client asks Lot A for free spaces.", run: async function (c) { hlLot("A"); await request("find", null, false, "A"); await wait(600); } },
+      { text: "alice reserves the first free space. Expect OK, 30 s lease.", run: async function (c) {
         c.sid = firstFree("A"); if (!c.sid) throw new Error("No free space in Lot A right now, try again.");
         setDriver("alice"); selectSpace(c.sid); await request("reserve", c.sid); await wait(600); } },
-      { text: "bob tries the same space. Expect DENIED reserved: the lot server is the only writer for its spaces and handles the two requests one after the other.", run: async function (c) { setDriver("bob"); await request("reserve", c.sid); await wait(600); } },
-      { text: "bob tries to release it. DENIED, it is not his.", run: async function (c) { await request("release", c.sid); await wait(600); } },
-      { text: "alice releases it. OK, the tile goes back to free.", run: async function (c) { setDriver("alice"); await request("release", c.sid); } },
+      { text: "bob asks for the same space. Expect DENIED. The lot server handles requests one at a time.", run: async function (c) { setDriver("bob"); await request("reserve", c.sid); await wait(600); } },
+      { text: "bob tries to release it. DENIED, not his.", run: async function (c) { await request("release", c.sid); await wait(600); } },
+      { text: "alice releases it. OK, the space is free again.", run: async function (c) { setDriver("alice"); await request("release", c.sid); } },
     ],
   },
   {
     title: "Lost reply, idempotent retry",
     steps: [
-      { text: "carol reserves a space, but the client throws away the first reply on purpose.", run: async function (c) {
+      { text: "carol reserves a space. The client drops the first reply on purpose.", run: async function (c) {
         c.sid = firstFree("A"); if (!c.sid) throw new Error("No free space in Lot A right now.");
         setDriver("carol"); selectSpace(c.sid); c.p = request("reserve", c.sid, true); await wait(300); } },
-      { text: "After the 2 s timeout the client retries with the same req_id. Watch the log: the server answers DUPLICATE from its reply cache.", run: async function (c) { hlEdge("client|lot_server_A"); await c.p; } },
-      { text: "Result: exactly one reservation, held by carol. A retry can never double-book.", run: async function (c) { highlight(document.querySelector('.tile[data-id="' + c.sid + '"]')); await wait(500); } },
+      { text: "After 2 s the client retries with the same req_id. The server answers from its reply cache (DUPLICATE in the log).", run: async function (c) { hlEdge("client|lot_server_A"); await c.p; } },
+      { text: "One reservation, held by carol. A retry cannot double-book.", run: async function (c) { highlight(document.querySelector('.tile[data-id="' + c.sid + '"]')); await wait(500); } },
     ],
   },
   {
     title: "Sensor node crash: spaces become unknown",
     steps: [
-      { text: "Crash sensor node A. The lot server just hears nothing; it cannot tell a dead sensor from a cut link.", run: async function () { hlNode("sensor_node_A"); await wait(800); killProcess("sensor_node_A"); } },
-      { text: "Rule: no report within Δ = 6 s means a space becomes unknown. Silence never turns into free.", run: async function () { hlLot("A"); await wait(7000, "waiting 7 s for Δ to expire"); } },
-      { text: "A find on Lot A now returns zero free spaces. The total still shows 20 so you can see how much visibility was lost. Lot B is unaffected.", run: async function () { await request("find", null, false, "A"); await wait(1200); } },
-      { text: "Restart the sensor. Its first heartbeat carries a full snapshot, so every space leaves unknown at once.", run: async function () { hlNode("sensor_node_A"); startProcess("sensor_node_A"); await wait(1500); } },
+      { text: "Crash sensor node A. The lot server hears nothing. It cannot tell a dead sensor from a cut link.", run: async function () { hlNode("sensor_node_A"); await wait(800); killProcess("sensor_node_A"); } },
+      { text: "No report within 6 s and a space becomes unknown. Silence never means free.", run: async function () { hlLot("A"); await wait(7000, "waiting 7 s"); } },
+      { text: "find on Lot A returns zero free spaces. Lot B is not affected.", run: async function () { await request("find", null, false, "A"); await wait(1200); } },
+      { text: "Restart the sensor. Its first heartbeat is a full snapshot, so every space leaves unknown at once.", run: async function () { hlNode("sensor_node_A"); startProcess("sensor_node_A"); await wait(1500); } },
     ],
   },
   {
@@ -97,19 +97,19 @@ const SCENARIOS = [
       { text: "alice reserves a space in Lot A.", run: async function (c) {
         c.sid = firstFree("A"); if (!c.sid) throw new Error("No free space in Lot A right now.");
         setDriver("alice"); selectSpace(c.sid); await request("reserve", c.sid); await wait(600); } },
-      { text: "Crash lot server A. Its in-memory table is gone. Lot B keeps serving.", run: async function () { hlNode("lot_server_A"); await wait(800); killProcess("lot_server_A"); await wait(500); } },
-      { text: "A request to Lot A now times out 3 times, 2 s each. A timeout only says how long we waited, not why.", run: async function () { hlEdge("client|lot_server_A"); await request("find", null, false, "A"); } },
-      { text: "Restart lot server A. It replays its log (heartbeats, events and the OK replies it sent) and rebuilds its table.", run: async function () { hlNode("lot_server_A"); startProcess("lot_server_A"); await wait(1500); } },
-      { text: "bob tries to reserve the same space. Expect DENIED reserved: alice's reservation survived the crash.", run: async function (c) { setDriver("bob"); selectSpace(c.sid); await request("reserve", c.sid); } },
+      { text: "Crash lot server A. Its memory is gone. Lot B keeps serving.", run: async function () { hlNode("lot_server_A"); await wait(800); killProcess("lot_server_A"); await wait(500); } },
+      { text: "A request to Lot A times out 3 times, 2 s each.", run: async function () { hlEdge("client|lot_server_A"); await request("find", null, false, "A"); } },
+      { text: "Restart lot server A. It replays its log and rebuilds its table.", run: async function () { hlNode("lot_server_A"); startProcess("lot_server_A"); await wait(1500); } },
+      { text: "bob tries the same space. DENIED. alice's reservation survived the crash.", run: async function (c) { setDriver("bob"); selectSpace(c.sid); await request("reserve", c.sid); } },
     ],
   },
   {
     title: "Peer link cut: other lot's data goes stale",
     steps: [
-      { text: "Cut the peer link between the two lot servers. Each keeps serving its own lot but stops hearing about the other.", run: async function () { hlEdge("lot_server_A|lot_server_B"); await wait(600); setLink("lot_server_A|lot_server_B", false); } },
-      { text: "After 9 s (three missed summaries) the other lot's numbers are marked STALE. We show that to the client instead of hiding it.", run: async function () { hlLot("A"); await wait(10000, "waiting 10 s for three missed summaries"); } },
-      { text: "A find on Lot A still works; the Lot B numbers in the reply are flagged STALE.", run: async function () { await request("find", null, false, "A"); await wait(1200); } },
-      { text: "Restore the link. The next summary clears the flag. Losing the peer link degrades the service, it does not break it.", run: async function () { hlEdge("lot_server_A|lot_server_B"); setLink("lot_server_A|lot_server_B", true); await wait(3500); } },
+      { text: "Cut the link between the two lot servers. Each keeps serving its own lot.", run: async function () { hlEdge("lot_server_A|lot_server_B"); await wait(600); setLink("lot_server_A|lot_server_B", false); } },
+      { text: "After 9 s (three missed summaries) the other lot's numbers are marked STALE.", run: async function () { hlLot("A"); await wait(10000, "waiting 10 s"); } },
+      { text: "find on Lot A still works. The Lot B numbers in the reply say STALE.", run: async function () { await request("find", null, false, "A"); await wait(1200); } },
+      { text: "Restore the link. The next summary clears the flag.", run: async function () { hlEdge("lot_server_A|lot_server_B"); setLink("lot_server_A|lot_server_B", true); await wait(3500); } },
     ],
   },
 ];
