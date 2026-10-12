@@ -112,7 +112,8 @@ Or start everything in the background at once:
 ```
 
 Console output of the background processes goes to `run/<name>.out`, the message logs
-to `logs/<name>.log`.
+to `logs/<name>.log`. If you get "permission denied", run `chmod +x run_demo.sh` once
+(or use `bash run_demo.sh`).
 
 Useful options:
 
