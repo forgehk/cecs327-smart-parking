@@ -5,197 +5,251 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Distributed Smart Parking - CECS 327</title>
   <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) and Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication).">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header>
-  <div>
-    <h1>Distributed Smart Parking - live prototype</h1>
-    <div class="sub">
-      CECS 327 · Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda ·
-      <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
-    </div>
-  </div>
-  <div class="pills" id="pills"></div>
-  <nav class="nav">
-    <a href="#milestone-1">Milestone 1 · live demo</a>
-    <a href="#milestone-2">Milestone 2 · communication model + sequence diagrams</a>
+<header class="top">
+  <div class="brand">Distributed Smart Parking <span>CECS 327</span></div>
+  <nav class="tabs" id="tabs">
+    <a href="#overview">Overview</a>
+    <a href="#milestone-1">Milestone 1 · demo</a>
+    <a href="#milestone-2">Milestone 2 · communication</a>
   </nav>
+  <div class="top-actions">
+    <button class="sm" id="btnReset" title="Restart every process, clear reservations and the log (R)">Reset demo</button>
+    <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
+  </div>
 </header>
 
-<main>
+<!-- ====================== Overview ====================== -->
+<section id="overview" class="hero">
+  <div class="wrap">
+    <h1>Distributed Smart Parking</h1>
+    <p class="lede">
+      Parking sensors, lot servers and a driver app running as separate processes that only talk by sending messages.
+      Each lot server owns its own lot; there is no central coordinator. The system keeps answering when a sensor dies,
+      a server crashes, a link is cut or a reply gets lost, and every message is logged so you can see what happened.
+    </p>
+    <p class="team"><b>Team:</b> Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda</p>
 
-  <!-- architecture diagram, drawn by diagram.js -->
-  <section class="card" id="milestone-1">
-    <h2>Milestone 1 · Architecture <span class="r" id="msgcount">0 msgs</span></h2>
-    <svg id="diagram" viewBox="0 0 560 340" role="img"
-         aria-label="Two sensor nodes push to two lot servers, which exchange summaries as peers; the client talks to either lot server."></svg>
-    <div class="hint">
-      Each box is a separate process (Web Worker) with its own memory; they only communicate by messages.
-      Dots are messages in flight:
-      <span style="color:#86efac">sensor</span> ·
-      <span style="color:#93c5fd">client</span> ·
-      <span style="color:#fcd34d">peer</span>.
-      Each lot server appends every message to its own log and replays it when restarted.
-    </div>
-  </section>
+    <div class="procstrip" id="procstrip"></div>
 
-  <!-- lot maps, filled by ui.js -->
-  <section class="card" id="lotA"></section>
-  <section class="card" id="lotB"></section>
-
-  <section class="card">
-    <h2>Fault injection</h2>
-    <div class="hint" style="margin-bottom:6px">Processes (kill = crash; restarting a lot server recovers from its log)</div>
-    <div class="procs" id="procs"></div>
-
-    <div class="hint" style="margin:10px 0 4px">Links (to the receiver a cut link and a dead process look the same: silence)</div>
-    <div class="links" id="links"></div>
-
-    <div class="row" style="margin-top:10px">
-      <label class="sl">latency
-        <input type="range" id="latency" min="0" max="1500" step="50" value="250">
-        <span id="latencyv">250 ms</span>
-      </label>
-      <label class="sl">network drop
-        <input type="range" id="drop" min="0" max="0.6" step="0.05" value="0">
-        <span id="dropv">0%</span>
-      </label>
-    </div>
-    <div class="row">
-      <label class="sl">sensor omission (dropped events)
-        <input type="range" id="omit" min="0" max="0.8" step="0.1" value="0">
-        <span id="omitv">0%</span>
-      </label>
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Client (driver app)</h2>
-    <div class="row">
-      <label class="sl">driver
-        <select id="who">
-          <option>alice</option>
-          <option>bob</option>
-          <option>carol</option>
-        </select>
-      </label>
-      <label class="sl">space
-        <input type="text" id="space" placeholder="click a tile, e.g. A-03" style="width:150px">
-      </label>
-    </div>
-    <div class="row">
-      <button class="primary" id="btnFindA">find (Lot A)</button>
-      <button class="primary" id="btnFindB">find (Lot B)</button>
-      <button class="ok" id="btnReserve">reserve</button>
-      <button id="btnRelease">release</button>
-      <button id="btnLost" title="Sends the request, ignores the first reply, then retries with the same req_id">reserve · simulate lost reply</button>
-    </div>
-    <div class="row">
-      <button id="btnCar" title="Tell the sensor node a car arrived at / left the selected space">car arrives / leaves at space</button>
-    </div>
-    <div class="reply" id="reply">-</div>
-    <div class="hint" style="margin-top:6px">
-      Every request carries a <kbd>req_id</kbd>. The client waits 2 s and retries up to 3 times with the same id;
-      the server caches replies by req_id, so a retry can never create a second reservation.
-    </div>
-  </section>
-
-  <section class="card">
-    <h2>Demo script</h2>
-    <div class="scen" id="scen"></div>
-    <div class="narr" id="narr"><div>Pick a scenario. Each one drives the system and explains what to watch.</div></div>
-  </section>
-
-  <section class="card span3">
-    <h2>Message log
-      <span class="r"><label class="sl" style="display:inline-flex"><input type="checkbox" id="autoscroll" checked> auto-scroll</label></span>
-    </h2>
-    <div class="row" style="justify-content:space-between">
-      <div class="chips" id="chips"></div>
-      <div class="row" style="margin:0">
-        <button id="btnDownload">download all logs (.jsonl)</button>
-        <button id="btnClear">clear view</button>
+    <div class="try" id="try">
+      <div class="card" data-scen="1">
+        <h3>Two drivers, one space</h3>
+        <p>alice reserves a space, bob tries the same one and gets DENIED. One request-reply at a time per lot server.</p>
+        <div class="go">Run scenario 1 →</div>
+      </div>
+      <div class="card" data-scen="3">
+        <h3>Kill a sensor</h3>
+        <p>The lot server hears nothing. After 6 s of silence its spaces become unknown, never free.</p>
+        <div class="go">Run scenario 3 →</div>
+      </div>
+      <div class="card" data-scen="4">
+        <h3>Crash a lot server</h3>
+        <p>Its memory is gone. On restart it replays its log and the reservation made before the crash is still there.</p>
+        <div class="go">Run scenario 4 →</div>
       </div>
     </div>
-    <div class="logwrap" id="logwrap">
-      <table>
-        <thead><tr><th>time</th><th>from → to</th><th>type</th><th>detail</th></tr></thead>
-        <tbody id="log"></tbody>
-      </table>
+  </div>
+</section>
+
+<!-- ====================== Milestone 1 ====================== -->
+<section id="milestone-1" class="ms">
+  <div class="wrap">
+    <div class="ms-head">
+      <div>
+        <div class="kicker">Milestone 1</div>
+        <h2>Live demo</h2>
+        <p>Five processes run in this page as Web Workers with their own memory. The page only plays the network: it adds latency, drops messages and cuts links. Click a process in the diagram to crash or restart it, click a link to cut it, click a space to act on it.</p>
+      </div>
+      <div class="links"><a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype">Python version with real TCP sockets →</a></div>
     </div>
-  </section>
 
-  <!-- ===================== Milestone 2: communication ===================== -->
-  <section class="card span3" id="milestone-2">
-    <h2>Milestone 2 · Communication <span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/comm">prototype/comm on GitHub</a></span></h2>
-    <p class="steps">
-      Milestone 2 replaces the simple messages above with a real communication layer: <b>TCP sockets</b>, every message a <b>JSON envelope</b>
-      (<code>type, msg_id, sender, timestamp, reply_to, payload</code>) sent as a 4-byte length header + UTF-8 body, and three patterns:
-      <b>request-reply</b> (client ↔ lot server), <b>publish-subscribe</b> (sensors → broker → subscribers) and <b>group communication</b>
-      (lot servers join a group at the registry and fan summaries out to every member).
-      Two new processes: the <b>broker</b> (:5000) and the <b>registry</b> (:5010).
-      Every process logs every message it sends or receives; a crashed lot server replays its log.
-      Each diagram below has a download button so it can go straight into the report.
-    </p>
+    <div class="grid-m1">
 
-    <div class="m2">
-      <div class="fig">
-        <div class="bar"><h3>Communication model</h3><button data-dl="model">download PNG</button></div>
-        <p>Who connects to whom. Every arrow is a TCP connection carrying framed JSON. A lot server is a service to clients, a subscriber and publisher at the broker, and a member of the <code>lot_servers</code> group.</p>
-        <svg id="model" viewBox="0 0 1000 545" role="img" aria-label="Communication model"></svg>
-        <div class="m2legend">
-          <span><i style="background:#059669"></i>sensor node (publisher)</span>
-          <span><i style="background:#7c3aed"></i>broker (pub-sub)</span>
-          <span><i style="background:#1d4ed8"></i>lot server (service, subscriber, publisher, group member)</span>
-          <span><i style="background:#dc2626"></i>registry (group membership)</span>
-          <span><i style="background:#ca8a04"></i>client (request-reply, subscriber)</span>
+      <div class="card area-arch">
+        <div class="card-head"><h3>Architecture</h3><span class="r" id="msgcount">0 msgs</span></div>
+        <div class="card-sub">Click a process to crash / restart it. Click a link to cut / restore it.</div>
+        <svg id="diagram" viewBox="0 0 560 345" role="img"
+             aria-label="Two sensor nodes push to two lot servers, which exchange summaries as peers; the client talks to either lot server."></svg>
+        <div class="net-legend">
+          <span><i style="background:var(--sensor)"></i>sensor messages</span>
+          <span><i style="background:var(--client)"></i>client messages</span>
+          <span><i style="background:var(--peer)"></i>peer summaries</span>
+          <span><i style="background:var(--err)"></i>dropped</span>
+        </div>
+        <div class="sliders">
+          <div class="sl"><label for="latency">network latency</label><input type="range" id="latency" min="0" max="1500" step="50" value="250"><span class="v" id="latencyv">250 ms</span></div>
+          <div class="sl"><label for="drop">network drop rate</label><input type="range" id="drop" min="0" max="0.6" step="0.05" value="0"><span class="v" id="dropv">0%</span></div>
+          <div class="sl"><label for="omit">sensor omission</label><input type="range" id="omit" min="0" max="0.8" step="0.1" value="0"><span class="v" id="omitv">0%</span></div>
         </div>
       </div>
 
-      <div class="fig">
-        <div class="bar"><h3>Request-reply</h3><button data-dl="rr">download PNG</button></div>
-        <p>One connection per exchange: open, REQUEST, REPLY, close. The REPLY echoes the REQUEST's <code>msg_id</code> in <code>reply_to</code>. No reply within 2 s → the client reconnects and resends the same REQUEST; the service caches replies by <code>msg_id</code>, so the retry gets the cached answer and the reservation is never made twice.</p>
-        <svg id="rr" viewBox="0 0 1000 520" role="img" aria-label="Request-reply sequence diagram"></svg>
+      <div class="card area-lotA" id="lotA"></div>
+      <div class="card area-lotB" id="lotB"></div>
+
+      <div class="card area-scen">
+        <div class="card-head"><h3>Scenarios</h3><span class="r">keys 1–5</span></div>
+        <div class="card-sub">Each one drives the system through the same controls and explains what to watch.</div>
+        <div class="scen-list" id="scen"></div>
+        <div class="runner" id="runner" hidden>
+          <div class="runner-head"><span>Running <b id="runnerTitle"></b></span><button class="sm" id="btnStop">Stop</button></div>
+          <div class="steps" id="steps"></div>
+        </div>
+        <div class="reply" id="reply"><span class="lbl">last client reply</span>-</div>
+        <div class="keys"><kbd>1</kbd>–<kbd>5</kbd> run scenario · <kbd>R</kbd> reset · <kbd>/</kbd> search log · <kbd>Esc</kbd> clear selection</div>
       </div>
 
-      <div class="fig">
-        <div class="bar"><h3>Publish-subscribe</h3><button data-dl="ps">download PNG</button></div>
-        <p>Subscribers keep one long-lived connection to the broker. A PUBLISH is fanned out as one EVENT per subscriber on that subscriber's own connection, one log line per delivery. The publisher gets an ACK with how many subscribers were reached. A subscriber the broker cannot deliver to is dropped from the topic.</p>
-        <svg id="ps" viewBox="0 0 1000 560" role="img" aria-label="Publish-subscribe sequence diagram"></svg>
+      <div class="card area-log">
+        <div class="card-head"><h3>Message log</h3><span class="r"><span id="logcount">0 rows</span></span></div>
+        <div class="card-sub">Every message the network carries, plus each process's console. Click a row to see the full message. Auto-scroll pauses while your pointer is over the log.</div>
+        <div class="log-tools">
+          <input type="search" id="logq" placeholder="search (space id, driver, req id, word)…">
+          <div class="chips" id="chips"></div>
+          <div class="chips" id="pchips"></div>
+          <span class="spacer"></span>
+          <button class="sm" id="btnDownload">download all logs (.jsonl)</button>
+          <button class="sm ghost" id="btnClear">clear view</button>
+        </div>
+        <div class="logwrap" id="logwrap">
+          <table class="log">
+            <thead><tr><th>time</th><th>from → to</th><th>type</th><th>detail</th></tr></thead>
+            <tbody id="log"></tbody>
+          </table>
+        </div>
+        <div class="log-foot">
+          <label><input type="checkbox" id="autoscroll" checked> auto-scroll</label>
+          <span>heartbeat 2 s · Δ = 6 s · peer summary 3 s (stale 9 s) · lease 30 s · client timeout 2 s × 3</span>
+        </div>
       </div>
 
-      <div class="fig">
-        <div class="bar"><h3>Group communication</h3><button data-dl="grp">download PNG</button></div>
-        <p>Members JOIN a group at the registry. To send, the sender asks the registry for MEMBERS, then opens one connection per member and sends GROUP_MSG. An unreachable member is logged and skipped; the others still get the message. No ordering or atomic delivery is guaranteed.</p>
-        <svg id="grp" viewBox="0 0 1000 560" role="img" aria-label="Group communication sequence diagram"></svg>
-      </div>
+    </div>
+  </div>
+</section>
 
-      <div class="fig">
-        <h3>Message envelope</h3>
-        <p>Every message, in every pattern, is a JSON object with these fields, sent as a 4-byte big-endian length followed by the UTF-8 body.</p>
-        <table>
-          <tr><th>field</th><th>meaning</th></tr>
-          <tr><td><code>type</code></td><td>REQUEST, REPLY, SUBSCRIBE, UNSUBSCRIBE, PUBLISH, EVENT, ACK, JOIN, LEAVE, MEMBERS, GROUP_MSG — used to dispatch</td></tr>
-          <tr><td><code>msg_id</code></td><td>unique id; a REPLY or ACK carries the id it answers in <code>reply_to</code></td></tr>
-          <tr><td><code>sender</code></td><td>process name, for the logs</td></tr>
-          <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's clock</td></tr>
-          <tr><td><code>payload</code></td><td>type-specific data</td></tr>
-        </table>
-        <p style="margin-top:10px">A real example of every type, taken from log files: <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">docs/MESSAGES.md</a>.
-          Sample logs: <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/docs/sample_logs_m2">docs/sample_logs_m2</a>.</p>
+<!-- ====================== Milestone 2 ====================== -->
+<section id="milestone-2" class="ms">
+  <div class="wrap">
+    <div class="ms-head">
+      <div>
+        <div class="kicker">Milestone 2</div>
+        <h2>Communication</h2>
+        <p>The simple messages above are replaced with a real communication layer: TCP sockets, every message a JSON envelope sent as a 4-byte length header plus UTF-8 body, and three patterns — request-reply, publish-subscribe and group communication. Two new processes appear: a broker and a registry. Every process logs every message; a crashed lot server replays its log.</p>
+      </div>
+      <div class="links">
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/comm">prototype/comm</a> ·
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">MESSAGES.md</a> ·
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/tests">tests</a> ·
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/docs/sample_logs_m2">sample logs</a>
       </div>
     </div>
-  </section>
 
-</main>
+    <div class="card viewer">
+      <div class="viewer-main">
+        <div class="vtabs" id="vtabs">
+          <button data-v="model" class="on">Communication model</button>
+          <button data-v="rr">Request-reply</button>
+          <button data-v="ps">Publish-subscribe</button>
+          <button data-v="grp">Group communication</button>
+        </div>
+        <div class="vpane on" data-v="model"><svg id="model" class="m2svg" viewBox="0 0 1000 545" role="img" aria-label="Communication model"></svg></div>
+        <div class="vpane" data-v="rr"><svg id="rr" class="m2svg" viewBox="0 0 1000 520" role="img" aria-label="Request-reply sequence diagram"></svg></div>
+        <div class="vpane" data-v="ps"><svg id="ps" class="m2svg" viewBox="0 0 1000 560" role="img" aria-label="Publish-subscribe sequence diagram"></svg></div>
+        <div class="vpane" data-v="grp"><svg id="grp" class="m2svg" viewBox="0 0 1000 560" role="img" aria-label="Group communication sequence diagram"></svg></div>
+      </div>
+      <div class="viewer-side">
+        <div class="vtext on" data-v="model">
+          <h3>Who connects to whom</h3>
+          <p>Every arrow is a TCP connection carrying framed JSON. Solid links stay open, dashed ones are opened on demand. A lot server plays four roles at once: service to clients, subscriber and publisher at the broker, and member of the <code>lot_servers</code> group.</p>
+          <div class="m2legend">
+            <span><i style="background:#34d399"></i>sensor node</span>
+            <span><i style="background:#a78bfa"></i>broker :5000</span>
+            <span><i style="background:#60a5fa"></i>lot server</span>
+            <span><i style="background:#f87171"></i>registry :5010</span>
+            <span><i style="background:#fbbf24"></i>client</span>
+          </div>
+        </div>
+        <div class="vtext" data-v="rr">
+          <h3>One exchange per connection</h3>
+          <p>Open, REQUEST, REPLY, close. The REPLY echoes the request's <code>msg_id</code> in <code>reply_to</code>. If no reply arrives within 2 s the client reconnects and resends the same REQUEST. The service caches replies by <code>msg_id</code>, so the retry gets the cached answer and the reservation is never made twice.</p>
+          <p style="margin-top:8px">Failure cases: unknown op or bad args → <code>status: ERROR</code>; no reply after 3 tries → <code>ServiceUnavailable</code>, logged.</p>
+        </div>
+        <div class="vtext" data-v="ps">
+          <h3>Broker in the middle</h3>
+          <p>Subscribers keep one long-lived connection to the broker. A PUBLISH is fanned out as one EVENT per subscriber on that subscriber's own connection, one log line per delivery. The publisher gets an ACK with how many subscribers were reached. A subscriber the broker can't deliver to is dropped from the topic rather than retried.</p>
+          <p style="margin-top:8px">Limits: the broker is a single point of failure; a slow subscriber can delay the others.</p>
+        </div>
+        <div class="vtext" data-v="grp">
+          <h3>Membership at the registry</h3>
+          <p>Members JOIN a group at the registry. To send, the sender asks for MEMBERS, then opens one connection per member and sends GROUP_MSG, logging one line per target. An unreachable member is logged and skipped; the others still get the message.</p>
+          <p style="margin-top:8px">No ordering or atomic delivery is guaranteed, and membership can change during a send. Future work: total ordering, acknowledgements, multicast.</p>
+        </div>
+        <div class="dl">
+          <button class="primary sm" id="btnDl">Download this diagram (PNG)</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-m2">
+      <div class="card">
+        <div class="card-head"><h3>Message envelope</h3></div>
+        <div class="card-sub">Every message, in every pattern, is a JSON object with these fields, sent as a 4-byte big-endian length followed by the UTF-8 body (<code>struct.pack("!I", len)</code>).</div>
+        <table class="plain">
+          <tr><th>field</th><th>meaning</th></tr>
+          <tr><td><code>type</code></td><td>which kind of message; the receiver dispatches on it</td></tr>
+          <tr><td><code>msg_id</code></td><td>unique id; a REPLY or ACK carries the id it answers in <code>reply_to</code></td></tr>
+          <tr><td><code>sender</code></td><td>process name, for the logs</td></tr>
+          <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's clock, used as ordering evidence</td></tr>
+          <tr><td><code>payload</code></td><td>type-specific data</td></tr>
+        </table>
+        <div class="card-foot">Malformed input: a bad length header, a truncated body or non-JSON bytes raise <code>ProtocolError</code> and the connection is closed; a closed socket mid-read raises <code>ConnectionClosed</code>. Max message size 1 MB.</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Message types</h3><span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/MESSAGES.md">real example of each →</a></span></div>
+        <div class="card-sub">Eleven types across the three patterns.</div>
+        <div class="types">
+          <div class="type"><b>REQUEST</b><span class="pat">request-reply</span><p>op + args from a client to a service</p></div>
+          <div class="type"><b>REPLY</b><span class="pat">request-reply</span><p>status OK / ERROR, result or error text, reply_to</p></div>
+          <div class="type"><b>SUBSCRIBE</b><span class="pat">pub-sub</span><p>subscriber asks the broker for a topic</p></div>
+          <div class="type"><b>UNSUBSCRIBE</b><span class="pat">pub-sub</span><p>subscriber leaves a topic</p></div>
+          <div class="type"><b>PUBLISH</b><span class="pat">pub-sub</span><p>publisher sends topic + data to the broker</p></div>
+          <div class="type"><b>EVENT</b><span class="pat">pub-sub</span><p>broker delivers a publish to one subscriber</p></div>
+          <div class="type"><b>ACK</b><span class="pat">pub-sub · group</span><p>broker / registry acknowledgement, carries delivered count or members</p></div>
+          <div class="type"><b>JOIN</b><span class="pat">group</span><p>node joins a group with its address</p></div>
+          <div class="type"><b>LEAVE</b><span class="pat">group</span><p>node leaves a group</p></div>
+          <div class="type"><b>MEMBERS</b><span class="pat">group</span><p>ask the registry who is in a group</p></div>
+          <div class="type"><b>GROUP_MSG</b><span class="pat">group</span><p>sender → each member, one connection per member</p></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head"><h3>Browser demo vs Python prototype</h3></div>
+      <div class="card-sub">The demo above is a simulation so it can run in a web page. The graded code is the Python prototype.</div>
+      <table class="plain">
+        <tr><th></th><th>Browser demo (this page)</th><th>Python prototype (<code>prototype/</code>)</th></tr>
+        <tr><td>processes</td><td>Web Workers, separate memory</td><td>OS processes, one per node</td></tr>
+        <tr><td>transport</td><td>postMessage via the page, which acts as the network</td><td>TCP sockets, 4-byte length prefix + JSON</td></tr>
+        <tr><td>patterns</td><td>request-reply, peer summaries</td><td>request-reply, publish-subscribe via broker, group via registry</td></tr>
+        <tr><td>faults</td><td>kill / restart, cut links, latency, drop, lost reply</td><td>kill any process, lost reply, broker crash, dead group member</td></tr>
+        <tr><td>logs</td><td>per-worker in memory, download as .jsonl</td><td>per-process <code>logs/*.log</code>, JSON lines, replayed on restart</td></tr>
+        <tr><td>tests</td><td>five scripted scenarios</td><td>10 framing checks, 21 pattern checks, 7 end-to-end scenarios</td></tr>
+      </table>
+    </div>
+  </div>
+</section>
 
 <footer>
-  heartbeat 2 s · staleness Δ = 3 × heartbeat = 6 s · peer summary every 3 s (stale after 9 s) ·
-  reservation lease 30 s · client timeout 2 s × 3 retries.
-  The Python version in <code>prototype/</code> uses the same protocol over TCP sockets.
+  CECS 327 · Distributed Smart Parking · the Python version in <code>prototype/</code> uses the same rules over real TCP sockets ·
+  <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
 </footer>
+
+<div id="toast"></div>
 
 <script src="js/config.js"></script>
 <script src="js/network.js"></script>
