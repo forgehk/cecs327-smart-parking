@@ -1,0 +1,14 @@
+[23:24:38] [sensor_node_A] starting with 20 spaces, broker 127.0.0.1:5000, topic lot/A/sensor, drop rate 0.00
+[23:24:41] [sensor_node_A] event 3: A-11 -> occupied
+[23:24:42] [sensor_node_A] event 5: A-18 -> occupied
+[23:24:59] [sensor_node_A] event 14: A-10 -> occupied
+[23:25:02] [sensor_node_A] broker unreachable (peer closed), will retry
+[23:25:03] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:04] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:05] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:06] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:07] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:08] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:09] [sensor_node_A] broker unreachable ([Errno 111] Connection refused), will retry
+[23:25:10] [sensor_node_A] published heartbeat but nobody is subscribed to lot/A/sensor yet
+[23:25:13] [sensor_node_A] event 26: A-08 -> occupied

@@ -1,0 +1,32 @@
+[23:24:45] [client driver1] -> find  (msg_id 0e77c8fc) to 127.0.0.1:5001
+[23:24:45] [client driver1] <- OK Lot A: 14 free, 6 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-08, A-10, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 1.3s old
+[23:24:45] [client alice] -> reserve A-03 (msg_id 9040cd5e) to 127.0.0.1:5001
+[23:24:45] [client alice] <- OK reserved (lease 30s)
+[23:24:45] [client bob] -> reserve A-03 (msg_id c071a112) to 127.0.0.1:5001
+[23:24:45] [client bob] <- DENIED reserved
+[23:24:45] [client alice] -> reserve A-03 (msg_id d25f5c0c) to 127.0.0.1:5001
+[23:24:45] [client alice] <- OK already held by you (lease 30s) (duplicate - cached reply)
+[23:24:45] [client bob] -> reserve Z-99 (msg_id c257368a) to 127.0.0.1:5001
+[23:24:45] [client bob] <- ERROR no such space in lot A: Z-99
+[23:24:45] [client watcher] subscribed to lot/A/status via broker 127.0.0.1:5000, waiting for events (Ctrl-C to stop)
+[23:24:46] [client watcher] EVENT A-03 -> reserved by alice   (published by lot_server_A at 23:24:46.127)
+[23:24:46] [client alice] -> release A-03 (msg_id 66c5f936) to 127.0.0.1:5001
+[23:24:46] [client alice] <- OK released
+[23:24:47] [client watcher] EVENT A-03 -> free   (published by lot_server_A at 23:24:47.131)
+... lot server B killed, waiting 10 s
+[23:25:02] [client driver1] -> find  (msg_id 45fcde1a) to 127.0.0.1:5001
+[23:25:02] [client driver1] <- OK Lot A: 13 free, 7 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-08, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 12.6s old [STALE]
+... broker killed, waiting 8 s
+[23:25:10] [client driver1] -> find  (msg_id 1124ab99) to 127.0.0.1:5001
+[23:25:10] [client driver1] <- OK Lot A: 0 free, 0 occupied, 0 reserved, 20 unknown
+   free spaces: (none)
+   Lot B: 12 free, 0 unknown - 20.7s old [STALE]
+... broker restarted, waiting 5 s
+[23:25:15] [client driver1] -> find  (msg_id 35327fbf) to 127.0.0.1:5001
+[23:25:15] [client driver1] <- OK Lot A: 12 free, 8 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 25.7s old [STALE]

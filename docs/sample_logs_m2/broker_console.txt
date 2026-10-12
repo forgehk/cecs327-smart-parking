@@ -1,0 +1,6 @@
+[23:24:37] [broker] listening on :5000
+[23:24:38] [broker] SUBSCRIBE lot_server_B -> lot/B/sensor (1 subscriber)
+[23:24:38] [broker] SUBSCRIBE lot_server_A -> lot/A/sensor (1 subscriber)
+[23:24:45] [broker] SUBSCRIBE client_watcher -> lot/A/status (1 subscriber)
+[23:24:51] [broker] subscriber 127.0.0.1:54484 disconnected, removed from lot/A/status
+[23:24:52] [broker] subscriber 127.0.0.1:53840 disconnected, removed from lot/B/sensor
