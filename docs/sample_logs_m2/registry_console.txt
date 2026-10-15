@@ -1,3 +1,0 @@
-[23:24:37] [registry] listening on :5010
-[23:24:38] [registry] JOIN 127.0.0.1:5002 -> lot_servers (1 member)
-[23:24:38] [registry] JOIN 127.0.0.1:5001 -> lot_servers (2 members)

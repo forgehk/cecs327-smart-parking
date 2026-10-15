@@ -82,8 +82,8 @@ Report - to do (owner: BL, outline already written):
 - [ ] three sequence diagrams: request-reply, pub-sub (1 publisher, 2 subscribers,
       broker), group send (sender, registry, 2 members)
 - [ ] communication model diagram (who connects to whom, which pattern on which arrow)
-- [ ] logging and evidence: paste from `docs/sample_logs_m2/demo_console.txt` and the
-      `.log` files
+- [ ] logging and evidence: paste from the `.log` files in `docs/sample_logs_m2/` and the
+      `m2_*.png` screenshots in `docs/screenshots/`
 - [ ] limitations: broker single point of failure, slow subscriber, no ordering across
       group members, no atomic delivery, membership can change mid-send
 - [ ] video
