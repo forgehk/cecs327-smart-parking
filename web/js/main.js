@@ -50,7 +50,7 @@ document.addEventListener("keydown", function (e) {
 });
 
 // active tab follows scroll position
-const sections = ["overview", "milestone-1", "milestone-2"].map(function (id) { return document.getElementById(id); });
+const sections = ["overview", "milestone-1", "milestone-2", "milestone-3"].map(function (id) { return document.getElementById(id); });
 function updateTabs() {
   const y = window.scrollY + 120;
   let cur = sections[0];
