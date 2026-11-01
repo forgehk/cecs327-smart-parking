@@ -3,7 +3,7 @@
 End-to-end test scenarios (whole system, real processes).
 
     cd prototype
-    python3 tests/run_tests.py          # all scenarios, about 80s
+    python3 tests/run_tests.py          # all scenarios, about 2 minutes
     python3 tests/run_tests.py 1 4      # just scenarios 1 and 4
 
 Each scenario starts the processes it needs (registry, broker, lot servers,
@@ -43,6 +43,29 @@ def start_infra():
     start("registry", "registry.py")
     start("broker", "broker.py")
     time.sleep(0.5)
+
+
+BOOT = {"A": None, "B": "127.0.0.1:5001", "C": "127.0.0.1:5002", "D": "127.0.0.1:5001", "E": "127.0.0.1:5003"}
+
+
+def start_lot(lot, *extra):
+    """Start a lot server; everyone but A joins the overlay through a bootstrap peer."""
+    args = ["lot_server.py", "--lot", lot] + (["--bootstrap", BOOT[lot]] if BOOT.get(lot) else []) + list(extra)
+    start(lot, *args)
+    time.sleep(0.6)
+
+
+def kill9(name):
+    """crash: SIGKILL, same as kill() (Popen.kill is SIGKILL on POSIX); named for clarity"""
+    kill(name)
+
+
+def term(name):
+    """graceful stop: SIGTERM, the lot server leaves the overlay before exiting"""
+    p = procs.pop(name, None)
+    if p:
+        p.terminate()
+        p.wait()
 
 
 def kill(name):
@@ -109,8 +132,8 @@ def scenario_1():
     print("\n[1] Request-reply: find / reserve / release, one driver per space")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
-    start("B", "lot_server.py", "--lot", "B")
+    start_lot("A")
+    start_lot("B")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     start("sB", "sensor_node.py", "--lot", "B", "--seed", "2")
     time.sleep(4)
@@ -141,7 +164,7 @@ def scenario_2():
     print("\n[2] Lost reply -> retry with same msg_id -> cached reply, no second reservation")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     time.sleep(4)
     sid = first_free("A")
@@ -160,7 +183,7 @@ def scenario_3():
     print("\n[3] Sensor node crash -> spaces become unknown after delta")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     time.sleep(4)
     r = result(client("find"))
@@ -178,7 +201,7 @@ def scenario_4():
     print("\n[4] Lot server crash + recovery from the log")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     time.sleep(4)
     sid = first_free("A")
@@ -188,7 +211,7 @@ def scenario_4():
     print("  ... lot server A killed; client should fail, then we restart it")
     reply = client("find")
     check(reply is None, "client gets no reply while server is down")
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     time.sleep(3)
     r = result(client("--id", "erin", "reserve", sid))
     check(r and not r["granted"] and r["reason"] == "reserved",
@@ -198,30 +221,31 @@ def scenario_4():
 
 
 def scenario_5():
-    print("\n[5] Group communication: peer dies -> member skipped in fan-out, summary goes stale")
+    print("\n[5] Overlay: summaries travel by gossip; a peer crashes -> dead pointer repaired, its replica goes stale")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
-    start("B", "lot_server.py", "--lot", "B")
+    start_lot("A")
+    start_lot("B")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     start("sB", "sensor_node.py", "--lot", "B", "--seed", "2")
     time.sleep(6)
     r = result(client("find"))
     ob = r and r["other_lots"].get("B")
-    check(ob and ob["free"] is not None and not ob["stale"], "A knows about B via GROUP_MSG: %s" % ob)
-    gm = [l for l in log_lines("lot_server_A") if l["dir"] == "send" and l["msg"].get("type") == "GROUP_MSG"]
-    check(len(gm) >= 1 and gm[0]["peer"] == "127.0.0.1:5002", "A's log has one GROUP_MSG send line per member (%d)" % len(gm))
-    reg = [l for l in log_lines("registry") if l["dir"] == "recv" and l["msg"].get("type") == "JOIN"]
-    check(len(reg) == 2, "registry log has both JOINs")
-    kill("B")
-    print("  ... lot server B killed, waiting 11 s (peer stale after 9 s)")
-    time.sleep(11)
+    check(ob and ob["free"] is not None and not ob["stale"], "A holds B's summary as a replica (gossip): %s" % ob)
+    gm = [l for l in log_lines("lot_server_B") if l["dir"] == "send" and l["msg"].get("type") == "P2P_GOSSIP"]
+    check(len(gm) >= 1 and gm[0]["peer"] == "127.0.0.1:5001", "B's log has P2P_GOSSIP send lines to its neighbor A (%d)" % len(gm))
+    jn = [l for l in log_lines("lot_server_A") if l["dir"] == "recv" and l["msg"].get("type") == "P2P_JOIN"]
+    check(len(jn) == 1, "A's log shows B's P2P_JOIN")
+    kill9("B")
+    print("  ... lot server B crashed (kill -9), waiting 13 s (ping every 5 s, replica stale after 12 s)")
+    time.sleep(13)
     r = result(client("find"))
     ob = r and r["other_lots"].get("B")
     check(r is not None, "A still answers clients")
-    check(ob and ob["stale"] is True, "B's summary marked STALE: %s" % ob)
-    skipped = [l for l in log_lines("lot_server_A") if l["dir"] == "info" and "member unreachable" in l["msg"].get("note", "")]
-    check(len(skipped) >= 1, "A's log shows the dead member was skipped in the fan-out (%d)" % len(skipped))
+    check(ob and ob["stale"] is True, "B's replica is flagged STALE: %s" % ob)
+    check("dead pointer removed" in console("A"), "A's console shows the dead pointer to B removed after a failed ping")
+    pr = result(client("peers"))
+    check(pr and pr["degree"] == 0 and pr["stats"]["repairs"] >= 1, "A's neighbor list is empty, repairs=%s" % (pr and pr["stats"]["repairs"]))
     kill_all()
 
 
@@ -229,7 +253,7 @@ def scenario_6():
     print("\n[6] Pub-sub: broker crash and restart -> everyone reconnects, lot recovers")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     time.sleep(4)
     r = result(client("find"))
@@ -254,7 +278,7 @@ def scenario_7():
     print("\n[7] Pub-sub: a watching client receives status EVENTs published by the lot server")
     fresh_logs()
     start_infra()
-    start("A", "lot_server.py", "--lot", "A")
+    start_lot("A")
     start("sA", "sensor_node.py", "--lot", "A", "--seed", "1")
     time.sleep(4)
     watcher = subprocess.Popen([PY, "-u", os.path.join(PROTO, "client.py"), "--id", "watcher", "watch", "A"],
@@ -277,7 +301,59 @@ def scenario_7():
     kill_all()
 
 
-SCEN = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4, 5: scenario_5, 6: scenario_6, 7: scenario_7}
+def scenario_8():
+    print("\n[8] Overlay join/leave trace across five lots (Milestone 3)")
+    fresh_logs()
+    start_infra()
+    for lot in "ABCD":
+        start_lot(lot)
+    for lot, seed in (("A", 1), ("B", 2), ("C", 3), ("D", 4)):
+        start("s" + lot, "sensor_node.py", "--lot", lot, "--seed", str(seed))
+    time.sleep(5)
+    views = {lot: result(client("--lot", lot, "peers")) for lot in "ABCD"}
+    degs = {lot: v["degree"] for lot, v in views.items() if v}
+    check(len(degs) == 4 and all(d >= 2 for d in degs.values()), "four lots up, every one has at least 2 neighbors: %s" % degs)
+    check(all(len(v["replicas"]) == 3 for v in views.values() if v), "every lot hosts replicas of the other three")
+    r = result(client("--lot", "D", "lookup", "B", "--no-cache", "--fresh"))
+    check(r and r["found"] and r["hops"] >= 1 and r["path"][-1] == "B",
+          "D's owner-only lookup for B floods the overlay: %s hop(s) via %s" % (r and r["hops"], r and "->".join(r["path"])))
+    r = result(client("total"))
+    check(r and sorted(r["lots"]) == ["A", "B", "C", "D"] and r["total"] == 80, "convergecast from A covers all four lots: %d free of %d" % (r["free"], r["total"]))
+
+    start_lot("E")
+    time.sleep(2)
+    e = console("E")
+    check("P2P JOIN via bootstrap 127.0.0.1:5003" in e and "took" in e and "P2P joined: neighbors" in e,
+          "E joins through C, receives C's table and at least one more neighbor pointer")
+    pe = result(client("--lot", "E", "peers"))
+    check(pe and pe["degree"] >= 2 and len(pe["replicas"]) >= 4, "E has %s neighbors and %s replicas right after joining" % (pe and pe["degree"], pe and len(pe["replicas"])))
+
+    term("C")                                  # SIGTERM -> graceful leave
+    time.sleep(1.5)
+    left = [lot for lot in "ABDE" if "P2P neighbor - C" in console(lot) and "left gracefully" in console(lot)]
+    check(len(left) >= 2, "C leaves gracefully: its neighbors %s dropped the pointer at once" % left)
+
+    kill9("D")                                 # crash
+    print("  ... D crashed (kill -9), waiting 7 s for the next ping round")
+    time.sleep(7)
+    repaired = [lot for lot in "ABE" if "P2P neighbor - D" in console(lot) and "dead pointer removed" in console(lot)]
+    check(len(repaired) >= 1, "D's crash is detected by ping: %s removed the dead pointer" % repaired)
+    views = {lot: result(client("--lot", lot, "peers")) for lot in "ABE"}
+    adj = {lot: [n["id"] for n in v["neighbors"]] for lot, v in views.items() if v}
+    seen, stack = {"A"}, ["A"]
+    while stack:
+        u = stack.pop()
+        for v in adj.get(u, []):
+            if v in adj and v not in seen:
+                seen.add(v)
+                stack.append(v)
+    check(seen == {"A", "B", "E"}, "A, B and E are still one connected mesh after a leave and a crash: %s" % adj)
+    r = result(client("total"))
+    check(r and sorted(r["lots"]) == ["A", "B", "E"], "convergecast now covers exactly the live lots: %s" % (r and sorted(r["lots"])))
+    kill_all()
+
+
+SCEN = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4, 5: scenario_5, 6: scenario_6, 7: scenario_7, 8: scenario_8}
 
 if __name__ == "__main__":
     which = [int(x) for x in sys.argv[1:]] or sorted(SCEN)
