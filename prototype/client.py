@@ -7,6 +7,9 @@ Driver client.
     python client.py --id alice reserve A-03
     python client.py --id alice release A-03
     python client.py watch A                     # subscribe to lot A status changes (Ctrl-C to stop)
+    python client.py lookup C                    # ask lot A's server for lot C's summary through the overlay
+    python client.py peers                       # lot A's neighbor list, replicas and counters
+    python client.py total                       # free spaces across every lot (convergecast)
 
 find / reserve / release use request-reply: one connection to the lot server,
 one REQUEST, one REPLY. Reservations are leases: they expire on their own after
@@ -18,6 +21,9 @@ request again with the same id, so the server can recognise the retry.
 
 watch uses pub-sub: it subscribes to lot/<lot>/status at the broker and prints
 every EVENT the lot server publishes.
+
+lookup / peers / total are ordinary request-reply calls to one lot server; that
+server answers them from its P2P middleware (Milestone 3).
 """
 
 import argparse
@@ -40,6 +46,10 @@ def do_request(args, host, port, log):
     req_args = {"client": args.id}
     if args.space:
         req_args["space"] = args.space
+    if args.op == "lookup":
+        req_args = {"lot": args.space or "B", "ttl": args.ttl, "no_cache": args.no_cache, "fresh": args.fresh}
+    if args.op == "total":
+        req_args = {"ttl": args.ttl}
 
     msg_id = envelope.new_id()
     say(args.id, "-> %s %s (msg_id %s) to %s:%d" % (args.op, args.space or "", msg_id, host, port))
@@ -72,6 +82,28 @@ def do_request(args, host, port, log):
             else:
                 print("   Lot %s: %d free, %d unknown - %.1fs old%s"
                       % (lot, v["free"], v["unknown"], v["age"], " [STALE]" if v["stale"] else ""))
+        return
+    if args.op == "lookup":
+        if r["found"]:
+            v = r["value"]
+            where = "local cache (0 hops)" if r.get("from_cache") else "%s after %d hop(s), path %s, %d message(s) sent" % (
+                r.get("holder"), r["hops"], "->".join(r["path"]), r["messages"])
+            say(args.id, "<- OK Lot %s: %d free, %d unknown (version %s) from %s" % (r["lot"], v["free"], v["unknown"], r["version"], where))
+        else:
+            say(args.id, "<- NOT FOUND Lot %s within TTL (%d message(s) sent)" % (r["lot"], r["messages"]))
+        return
+    if args.op == "peers":
+        say(args.id, "<- OK lot %s at %s: degree %d (target %d), p_f %.1f" % (r["id"], r["address"], r["degree"], r["max_neighbors"], r["gossip_prob"]))
+        print("   neighbors:", ", ".join("%s (%s)" % (n["id"], n["address"]) for n in r["neighbors"]) or "(none)")
+        for k, v in sorted(r["replicas"].items()):
+            print("   replica %-16s from %s: %s free, %.1fs old%s" % (k, v["origin"], v["free"], v["age"], " STALE" if v["stale"] else ""))
+        st = r["stats"]
+        print("   counters: gossip sent %d recv %d fwd %d stale %d | lookups sent %d recv %d dup %d ttl0 %d | pings %d failed %d repairs %d"
+              % (st["gossip_sent"], st["gossip_recv"], st["gossip_fwd"], st["gossip_stale"], st["lookup_sent"], st["lookup_recv"],
+                 st["lookup_dup"], st["lookup_ttl0"], st["pings"], st["ping_failed"], st["repairs"]))
+        return
+    if args.op == "total":
+        say(args.id, "<- OK %d free of %d across lots %s (%d message(s) up the tree)" % (r["free"], r["total"], ",".join(r["lots"]), r["messages"]))
         return
     verdict = "OK" if r["granted"] else "DENIED"
     extra = " (lease %.0fs)" % r["lease"] if r.get("lease") else ""
@@ -109,8 +141,11 @@ def main():
     ap.add_argument("--broker", default="127.0.0.1:%d" % BROKER_PORT)
     ap.add_argument("--json", action="store_true", help="print the raw reply")
     ap.add_argument("--simulate-lost-reply", action="store_true")
-    ap.add_argument("op", choices=["find", "reserve", "release", "watch"])
-    ap.add_argument("space", nargs="?", help="space id (reserve/release) or lot id (watch)")
+    ap.add_argument("--ttl", type=int, default=3, help="flood depth for lookup / total")
+    ap.add_argument("--no-cache", action="store_true", help="lookup: skip the local replica so the flood is visible")
+    ap.add_argument("--fresh", action="store_true", help="lookup: only the lot that owns the key may answer, not a replica")
+    ap.add_argument("op", choices=["find", "reserve", "release", "watch", "lookup", "peers", "total"])
+    ap.add_argument("space", nargs="?", help="space id (reserve/release) or lot id (watch/lookup)")
     args = ap.parse_args()
 
     log = MessageLog("client_" + args.id)
@@ -125,7 +160,7 @@ def main():
         host, port = args.server.split(":")
         port = int(port)
     else:
-        lot = args.space.split("-")[0] if args.space else args.lot
+        lot = args.space.split("-")[0] if args.space and args.op in ("reserve", "release") else args.lot
         host, port = "127.0.0.1", LOT_PORTS.get(lot, LOT_PORTS[args.lot])
     do_request(args, host, port, log)
 
