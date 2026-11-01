@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Distributed Smart Parking, CECS 327</title>
-  <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) and Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication).">
+  <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication) and Milestone 3 peer-to-peer overlay (join, leave, gossip, flood lookup, replicas).">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
@@ -18,6 +18,7 @@
     <a href="#overview">Overview</a>
     <a href="#milestone-1">Milestone 1</a>
     <a href="#milestone-2">Milestone 2</a>
+    <a href="#milestone-3">Milestone 3</a>
   </nav>
   <div class="top-actions">
     <button class="sm" id="btnReset" title="Restart every process, clear reservations and the log (R)">Reset demo</button>
@@ -235,10 +236,181 @@
         <tr><td>processes</td><td>Web Workers, separate memory</td><td>OS processes, one per node</td></tr>
         <tr><td>transport</td><td>postMessage via the page, which acts as the network</td><td>TCP sockets, 4-byte length prefix + JSON</td></tr>
         <tr><td>patterns</td><td>request-reply, peer summaries</td><td>request-reply, publish-subscribe via broker, group via registry</td></tr>
+        <tr><td>overlay</td><td>simulated in the Milestone 3 section with the same rules</td><td>real mesh over TCP in <code>prototype/p2p</code>, up to five lots</td></tr>
         <tr><td>faults</td><td>kill / restart, cut links, latency, drop, lost reply</td><td>kill any process, lost reply, broker crash, dead group member</td></tr>
         <tr><td>logs</td><td>per-worker in memory, download as .jsonl</td><td>per-process <code>logs/*.log</code>, JSON lines, replayed on restart</td></tr>
-        <tr><td>tests</td><td>five scripted scenarios</td><td>10 framing checks, 21 pattern checks, 7 end-to-end scenarios</td></tr>
+        <tr><td>tests</td><td>five scripted scenarios</td><td>10 framing checks, 21 pattern checks, 27 overlay checks, 8 end-to-end scenarios</td></tr>
       </table>
+    </div>
+  </div>
+</section>
+
+<!-- ====================== Milestone 3 ====================== -->
+<section id="milestone-3" class="ms">
+  <div class="wrap">
+    <div class="ms-head">
+      <div>
+        <div class="kicker">Milestone 3</div>
+        <h2>Peer-to-peer overlay</h2>
+        <p>The lot servers form an unstructured mesh. Each one keeps a short neighbor list, joins through any running peer, gossips its own summary, keeps replicas of the other lots, and floods a lookup for anything it does not have. There is no coordinator and no rule that says which node owns which key.</p>
+      </div>
+      <div class="links">
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/p2p">prototype/p2p</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/P2P.md">P2P.md</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/prototype/tests/test_p2p.py">tests</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/docs/sample_logs_m3">sample logs</a>
+      </div>
+    </div>
+
+    <div class="card m3sim">
+      <div class="m3-main">
+        <div class="card-head"><h3>Overlay simulator</h3><span class="r" id="m3state">4 lots, 5 links</span></div>
+        <div class="card-sub">Same rules as <code>p2p/overlay.py</code>, starting from the mesh <code>run_demo.sh</code> builds. Click a lot to crash it, click a stopped lot to start it again through a random peer.</div>
+        <svg id="overlay" viewBox="0 0 680 450" role="img" aria-label="Overlay of lot servers A to E"></svg>
+        <div class="m3legend">
+          <span><i style="background:#c4b5fd"></i>join, leave, ping</span>
+          <span><i style="background:#93c5fd"></i>lookup</span>
+          <span><i style="background:#fcd34d"></i>gossip</span>
+          <span><i style="background:#34d399"></i>found, reply</span>
+          <span><i style="background:#f472b6"></i>convergecast</span>
+          <span><i style="background:#ef4444"></i>duplicate or failed</span>
+        </div>
+      </div>
+      <div class="m3-side">
+        <div class="m3group">
+          <div class="m3label">Membership</div>
+          <div class="m3row">
+            <button data-m3="join">E joins through C</button>
+            <button data-m3="leave">C leaves</button>
+            <button data-m3="crash">D crashes</button>
+            <button data-m3="ping">Ping round</button>
+          </div>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Queries</div>
+          <div class="m3row">
+            <label class="m3sel">from <select id="m3from"></select></label>
+            <label class="m3sel">for <select id="m3for"></select></label>
+          </div>
+          <div class="m3row">
+            <button class="primary" data-m3="lookup">Lookup</button>
+            <button data-m3="gossip">Gossip</button>
+            <button data-m3="total">Total</button>
+          </div>
+          <div class="sl"><label for="m3ttl">TTL</label><input type="range" id="m3ttl" min="1" max="4" step="1" value="3"><span class="v" id="m3ttlv">3</span></div>
+          <div class="sl"><label for="m3pf">gossip p<sub>f</sub></label><input type="range" id="m3pf" min="0.1" max="1" step="0.1" value="0.7"><span class="v" id="m3pfv">0.7</span></div>
+          <div class="sl"><label>speed</label><span class="chips" id="m3speed"><span class="chip" data-s="0.5">slow</span><span class="chip on" data-s="1">normal</span><span class="chip" data-s="2">fast</span></span></div>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Live metrics</div>
+          <table class="m3metrics" id="m3metrics"></table>
+        </div>
+        <div class="m3row" style="margin-top:6px"><button class="ghost sm" data-m3="reset">Reset overlay</button></div>
+      </div>
+      <div class="m3-log">
+        <div class="m3label">Event log</div>
+        <div class="olog" id="m3log"></div>
+      </div>
+    </div>
+
+    <div class="grid-m2">
+      <div class="card">
+        <div class="card-head"><h3>Software stack on each lot server</h3></div>
+        <div class="card-sub">Sensor updates and client requests never deal with routing. The application only calls three functions.</div>
+        <div class="stack">
+          <div class="layer l1"><b>Application</b><span>space table, find, reserve, release, summary every 3 s</span></div>
+          <div class="layer l2"><b>Middleware</b><span><code>put(key, value)</code> &nbsp; <code>get(key)</code> &nbsp; <code>lookup(key, ttl)</code> &nbsp; <code>aggregate()</code></span></div>
+          <div class="layer l3"><b>Overlay</b><span>neighbor list, join and leave, ping repair, gossip, flood, convergecast</span></div>
+          <div class="layer l4"><b>Transport</b><span>framed JSON over TCP, one port per lot (Milestone 2)</span></div>
+        </div>
+        <div class="card-foot">Replicas take load off the owner: a client asking lot A about lot C is answered from A's copy, so only reservations have to reach C. That keeps the arrival rate at each lot below its service rate during a spike.</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Measured on the prototype</h3><span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/docs/sample_logs_m3/p2p_metrics_four_lots.txt">p2p_metrics.py output</a></span></div>
+        <div class="card-sub">Four lots started by <code>run_demo.sh</code>, numbers rebuilt from each server's neighbor list.</div>
+        <table class="plain">
+          <tr><th>metric</th><th>value</th></tr>
+          <tr><td>links</td><td>A-B, A-C, A-D, B-C, C-D</td></tr>
+          <tr><td>degree</td><td>A 3, B 2, C 3, D 2 (average 2.5)</td></tr>
+          <tr><td>diameter</td><td>2 hops (B to D), average path 1.17</td></tr>
+          <tr><td>lookup cost</td><td>12 owner-only lookups, all found, 1.17 hops on average, 2 at most</td></tr>
+          <tr><td>stretch</td><td>1.00 (the flood always finds the shortest overlay path)</td></tr>
+          <tr><td>maintenance</td><td>10 pings every 5 s, 2 messages per second for the whole overlay</td></tr>
+          <tr><td>gossip miss</td><td>(1 &minus; 0.7)<sup>3</sup> = 0.027 for A and C, (1 &minus; 0.7)<sup>2</sup> = 0.09 for B and D</td></tr>
+          <tr><td>join cost</td><td>1 round trip to the bootstrap, then 1 per extra neighbor</td></tr>
+          <tr><td>leave cost</td><td>one message per neighbor, nothing else changes</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card viewer" style="margin-top:14px">
+      <div class="viewer-main">
+        <div class="vtabs" id="m3tabs">
+          <button data-v="trace" class="on">Join and leave trace</button>
+          <button data-v="msgs">Message types</button>
+          <button data-v="cons">Caching and consistency</button>
+        </div>
+        <div class="vpane3 on" data-v="trace"><pre class="trace" id="m3trace"></pre></div>
+        <div class="vpane3" data-v="msgs">
+          <div class="types">
+            <div class="type"><b>P2P_JOIN</b><span class="pat">membership</span><p>newcomer to one bootstrap peer; ACK carries neighbor pointers and the whole table</p></div>
+            <div class="type"><b>P2P_NEIGHBOR</b><span class="pat">membership</span><p>ask a peer to link; ACK carries its table</p></div>
+            <div class="type"><b>P2P_LEAVE</b><span class="pat">membership</span><p>sent to each neighbor on a graceful exit</p></div>
+            <div class="type"><b>P2P_PING</b><span class="pat">maintenance</span><p>every 5 s; ACK carries a neighbor sample and the table</p></div>
+            <div class="type"><b>P2P_GOSSIP</b><span class="pat">push</span><p>key, value, version, origin, path; forwarded with p<sub>f</sub></p></div>
+            <div class="type"><b>P2P_LOOKUP</b><span class="pat">pull</span><p>qid, key, TTL, asker, path; duplicates dropped by qid</p></div>
+            <div class="type"><b>P2P_FOUND</b><span class="pat">pull</span><p>sent straight back to the asker with hops and path</p></div>
+            <div class="type"><b>P2P_AGG</b><span class="pat">convergecast</span><p>flooded from the root; first sender becomes the parent</p></div>
+            <div class="type"><b>P2P_AGG_REPLY</b><span class="pat">convergecast</span><p>partial free and total counts, sent up to the parent</p></div>
+          </div>
+        </div>
+        <div class="vpane3" data-v="cons">
+          <div class="qa">
+            <div><h4>How long is a cached count valid?</h4><p>Every replica records when it was stored. <code>find</code> reports its age and flags it stale after 12 s, four missed gossip rounds. Clients see an old number labelled as old.</p></div>
+            <div><h4>When do updates become visible?</h4><p>Neighbors see a put within one message. Everyone else in the same round with probability 1 &minus; (1 &minus; p<sub>f</sub>)<sup>n</sup>, otherwise within the next round (3 s) or the next ping (5 s), whose answer carries the full table.</p></div>
+            <div><h4>How are competing updates handled?</h4><p>Only the owning lot writes its key, and every write carries a version. A replica keeps a value only if its version is higher. Late or duplicated rumors cannot roll it back. Reservations always go to the owner.</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="viewer-side">
+        <div class="vtext3 on" data-v="trace">
+          <h3>Five lots on the real system</h3>
+          <p>Console lines from the prototype: four lots start, E joins through C and receives four replicas at once, D floods a lookup for B, C leaves, D is killed.</p>
+          <p style="margin-top:8px">After C leaves, B and E are each down to one link. The random sample in the next ping answer lets them find each other, so the mesh stays in one piece.</p>
+        </div>
+        <div class="vtext3" data-v="msgs">
+          <h3>Nine new message types</h3>
+          <p>All of them use the Milestone 2 envelope and arrive on the lot server's normal port. JOIN, NEIGHBOR and PING are answered with an ACK on the same connection. The rest are one way.</p>
+        </div>
+        <div class="vtext3" data-v="cons">
+          <h3>Every lot is a cache</h3>
+          <p>Each server holds the other lots' summaries, so it answers questions about them without asking. The system is eventually consistent: there is no moment when every lot agrees exactly, but each copy says how old it is.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-m2">
+      <div class="card">
+        <div class="card-head"><h3>Why a mesh</h3></div>
+        <table class="plain meshcmp">
+          <tr><th></th><th>degree</th><th>diameter</th><th>for our lots</th></tr>
+          <tr><td>ring</td><td>2</td><td>&lfloor;N/2&rfloor;</td><td>one break splits it in two lines; updates crawl around</td></tr>
+          <tr><td>tree</td><td>varies</td><td>O(log N)</td><td>every broadcast passes the root; the root is a bottleneck and a single point of failure</td></tr>
+          <tr><td>Chord</td><td>O(log N)</td><td>O(log N)</td><td>fast key lookups, but each join moves keys and updates fingers; a broadcast has to be built on top</td></tr>
+          <tr><td>our mesh</td><td>2 to 3</td><td>2</td><td>joins and leaves touch only neighbors; gossip spreads updates with no hot node</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Push and pull</h3></div>
+        <table class="plain">
+          <tr><th></th><th>push: gossip</th><th>pull: lookup</th></tr>
+          <tr><td>when</td><td>every 3 s, for each lot's own summary</td><td>a client asks about a lot that is not cached</td></tr>
+          <tr><td>spreads</td><td>origin to all neighbors, then each peer forwards with p<sub>f</sub> = 0.7</td><td>to all neighbors, TTL drops by one per hop</td></tr>
+          <tr><td>stops</td><td>message already seen, or version not newer</td><td>query id already seen, or TTL reaches 0</td></tr>
+          <tr><td>cost</td><td>about one message per link per round</td><td>grows like d(d &minus; 1)<sup>k &minus; 1</sup> at step k</td></tr>
+          <tr><td>answer</td><td>none; the value is now in every store</td><td>P2P_FOUND straight back to the asker, then cached</td></tr>
+        </table>
+      </div>
     </div>
   </div>
 </section>
@@ -256,5 +428,6 @@
 <script src="js/scenarios.js"></script>
 <script src="js/main.js"></script>
 <script src="js/m2.js"></script>
+<script src="js/m3.js"></script>
 </body>
 </html>
