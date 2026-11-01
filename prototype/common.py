@@ -25,10 +25,23 @@ CLIENT_RETRIES = 3
 # ports
 BROKER_PORT = 5000          # pub-sub broker
 REGISTRY_PORT = 5010        # group membership registry
-LOT_PORTS = {               # lot server request-reply + GROUP_MSG listener
+LOT_PORTS = {               # lot server: request-reply, pub-sub status, P2P overlay, all on one port
     "A": 5001,
     "B": 5002,
+    "C": 5003,
+    "D": 5004,
+    "E": 5005,
 }
+
+# peer-to-peer overlay (Milestone 3)
+P2P_MAX_NEIGHBORS = 2        # links a node opens itself; incoming joins are always accepted, so degree varies
+P2P_GOSSIP_INTERVAL = 3.0    # how often a lot re-gossips its own summary (push)
+P2P_GOSSIP_PROB = 0.7        # p_f: chance an informed peer forwards a rumor to each neighbor
+P2P_MAINT_INTERVAL = 5.0     # ping neighbors, repair dead pointers, random sampling
+P2P_PING_TIMEOUT = 1.0
+P2P_LOOKUP_TTL = 3           # flood depth for a pull lookup
+P2P_LOOKUP_TIMEOUT = 2.0     # how long the asker waits for a FOUND
+P2P_REPLICA_STALE = 4 * P2P_GOSSIP_INTERVAL   # a cached remote summary older than this is flagged stale
 
 # topics and groups
 def sensor_topic(lot):

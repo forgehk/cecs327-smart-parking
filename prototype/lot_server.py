@@ -8,16 +8,28 @@ Lot server - one process per parking lot.
 Holds the state of every space in its lot. It is the only process that may
 change that state, which is what stops two drivers from getting the same space.
 
-How it talks to everyone else (Milestone 2):
+How it talks to everyone else:
 
     sensor node  -> broker -> us      pub-sub: we SUBSCRIBE to lot/<lot>/sensor and
                                       get the sensor's events and heartbeats as EVENTs
-    client       -> us                request-reply: find / reserve / release on our port
+    client       -> us                request-reply: find / reserve / release / lookup /
+                                      peers / total on our port
     us           -> broker            pub-sub: we PUBLISH every space state change to
                                       lot/<lot>/status so anyone can watch the lot
-    us          <-> other lot servers group: we JOIN the lot_servers group at the registry
-                                      and send our summary to the group every few seconds;
-                                      members receive it as GROUP_MSG on their port
+    us          <-> other lot servers P2P overlay (Milestone 3): an unstructured mesh.
+                                      We join through one bootstrap peer, keep a short
+                                      neighbor list, gossip our summary (put), hold
+                                      replicas of the other lots' summaries (get), and
+                                      flood a TTL-bounded lookup for anything not cached.
+    us           -> registry          only as a directory to find a bootstrap peer when
+                                      --bootstrap is not given (the Milestone 2 group).
+
+Software stack on each lot server:
+
+    application   space table, find / reserve / release, summaries
+    middleware    p2p.overlay.Peer: put(key, value) / get(key) / lookup(key)
+    overlay       neighbor list, join/leave, ping repair, gossip, flood
+    transport     comm/: framed JSON over TCP, one Service on one port
 
 Every message is written to logs/lot_server_<lot>.log, and on restart the server
 replays that log to rebuild its table (crash-recovery).
@@ -25,15 +37,21 @@ replays that log to rebuild its table (crash-recovery).
 
 import argparse
 import os
+import signal
 import sys
 import threading
 import time
 
 from comm import group, pubsub, request_reply
 from comm.request_reply import BadRequest
-from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, PEER_STALE_AFTER,
-                    PEER_SUMMARY_INTERVAL, REGISTRY_PORT, RESERVATION_LEASE, STALENESS_DELTA,
+from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, P2P_GOSSIP_INTERVAL, P2P_LOOKUP_TTL,
+                    REGISTRY_PORT, RESERVATION_LEASE, STALENESS_DELTA,
                     MessageLog, now, sensor_topic, status_topic, ts_str)
+from p2p.overlay import Peer
+
+
+def summary_key(lot):
+    return "lot/%s/summary" % lot
 
 
 class Space:
@@ -68,12 +86,13 @@ class Space:
 
 
 class LotServer:
-    def __init__(self, lot, port, broker, registry, n_spaces, workers):
+    def __init__(self, lot, port, broker, registry, n_spaces, workers, bootstrap=None):
         self.lot = lot
         self.port = port
         self.address = "127.0.0.1:%d" % port
         self.broker = broker                # (host, port)
-        self.registry = registry            # (host, port)
+        self.registry = registry            # (host, port) or None
+        self.bootstrap = bootstrap          # "host:port" of one existing peer, or None
         self.name = "lot_server_" + lot
         self.log = MessageLog(self.name)
         self.lock = threading.Lock()
@@ -81,8 +100,6 @@ class LotServer:
         for i in range(1, n_spaces + 1):
             sid = "%s-%02d" % (lot, i)
             self.spaces[sid] = Space(sid)
-        self.peer_summaries = {}            # lot -> (summary dict, time received)
-        self.known_peers = set()
         self.last_sensor_seq = -1
         self.stopping = False
 
@@ -90,7 +107,12 @@ class LotServer:
         self.service.register("find", self.op_find)
         self.service.register("reserve", self.op_reserve)
         self.service.register("release", self.op_release)
-        self.service.on_type("GROUP_MSG", self.on_group_msg)
+        self.service.register("lookup", self.op_lookup)
+        self.service.register("peers", self.op_peers)
+        self.service.register("total", self.op_total)
+
+        # the P2P middleware shares our port: its message types are dispatched by the Service
+        self.peer = Peer(lot, self.address, self.service, self.log, info=self.info)
 
         self.subscriber = pubsub.Subscriber(broker[0], broker[1], self.name, self.log, self.on_sensor_event)
         self.publisher = pubsub.Publisher(broker[0], broker[1], self.name, self.log)
@@ -213,52 +235,93 @@ class LotServer:
                 self.info("RELEASE %s by %s: DENIED" % (sp.sid, client))
         return result
 
-    # ---- other lot servers (group communication) ----
-
-    def on_group_msg(self, msg, conn):
-        data = msg["payload"].get("data", {})
-        if data.get("kind") != "summary":
-            return
-        with self.lock:
-            self.peer_summaries[data["lot"]] = (data, now())
-            self.known_peers.add(data["lot"])
+    # ---- other lot servers (P2P overlay) ----
 
     def peer_view(self, t=None):
-        """What we currently believe about the other lots, with how old it is."""
-        t = t or now()
+        """What we currently believe about the other lots: the replicas the
+        middleware holds for us, with their age and a stale flag. A read, no network."""
         out = {}
-        for lot, (summ, received) in self.peer_summaries.items():
-            age = round(t - received, 1)
-            out[lot] = {
-                "free": summ["free"],
-                "unknown": summ["unknown"],
-                "age": age,
-                "stale": age > PEER_STALE_AFTER,
-            }
+        for key, e in self.peer.replicas().items():
+            if not key.endswith("/summary"):
+                continue
+            v = e["value"]
+            out[e["origin"]] = {"free": v.get("free"), "unknown": v.get("unknown"),
+                                "age": e["age"], "stale": e["stale"], "version": e["version"]}
         return out
 
-    def join_group(self):
-        while not self.stopping:
+    def op_lookup(self, args, req):
+        """Pull: find another lot's summary even if we don't have it cached.
+        Local store first, otherwise a TTL-bounded flood through the overlay."""
+        lot = args.get("lot")
+        if not lot:
+            raise BadRequest("missing lot")
+        ttl = int(args.get("ttl", P2P_LOOKUP_TTL))
+        r = self.peer.lookup(summary_key(lot), ttl=ttl, use_cache=not args.get("no_cache", False),
+                             fresh=bool(args.get("fresh", False)))
+        r["op"] = "lookup"
+        r["lot"] = lot
+        return r
+
+    def op_peers(self, args, req):
+        """The middleware's view: neighbors, replicas, counters. For the metrics tool."""
+        m = self.peer.metrics()
+        m["op"] = "peers"
+        m["replicas"] = {k: {"origin": e["origin"], "age": e["age"], "stale": e["stale"], "free": e["value"].get("free")}
+                         for k, e in self.peer.replicas().items()}
+        return m
+
+    def op_total(self, args, req):
+        """Convergecast: free / total over every lot reachable in the overlay."""
+        r = self.peer.aggregate(ttl=int(args.get("ttl", P2P_LOOKUP_TTL)))
+        r["op"] = "total"
+        self.info("TOTAL across %s: %d free of %d (%d messages up the tree)" % (r["lots"], r["free"], r["total"], r["messages"]))
+        return r
+
+    def find_bootstrap(self):
+        """--bootstrap wins. Otherwise ask the registry (the Milestone 2 group) who is
+        already running and pick the first one that is not us. First node: nobody."""
+        if self.bootstrap:
+            return self.bootstrap
+        if not self.registry:
+            return None
+        try:
+            members = group.members(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.name, self.log)
+        except OSError:
+            self.info("registry unreachable, starting as the first peer")
+            return None
+        others = [m for m in members if m != self.address]
+        return others[0] if others else None
+
+    def join_overlay(self):
+        """Register in the directory, then join the mesh through one bootstrap peer.
+        Retries until a bootstrap answers, so start order does not matter."""
+        if self.registry:
             try:
                 ack = group.join(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.address, self.name, self.log)
-                self.info("JOIN %s at registry: members now %s" % (LOT_SERVER_GROUP, ack.get("members")))
-                return
+                self.info("registered at registry: members now %s" % ack.get("members"))
             except OSError:
-                self.info("registry unreachable, retrying JOIN in 2s")
-                time.sleep(2.0)
+                self.info("registry unreachable, skipping registration")
+        for attempt in range(1, 6):
+            boot = self.find_bootstrap()
+            if boot is None:
+                self.info("P2P first peer in the overlay, waiting for others to join")
+                break
+            if self.peer.join(boot):
+                break
+            self.info("P2P bootstrap %s did not answer, retry %d in 2s" % (boot, attempt))
+            time.sleep(2.0)
+        self.peer.start()
 
     def gossip_loop(self):
-        """Background thread: send our summary to the whole group every few seconds."""
+        """Background thread: put our summary into the overlay every few seconds.
+        The middleware gossips it; other lots keep it as a replica."""
         while not self.stopping:
-            time.sleep(PEER_SUMMARY_INTERVAL)
             with self.lock:
                 summ = self.summary()
-            data = {"kind": "summary", "lot": self.lot, "ts": round(now(), 3)}
-            data.update(summ)
-            delivered, failed = group.group_send(self.registry[0], self.registry[1], LOT_SERVER_GROUP,
-                                                 data, self.name, self.log, exclude=self.address)
-            for addr in failed:
-                self.info("PEER %s unreachable, still serving own lot" % addr)
+            summ["lot"] = self.lot
+            summ["ts"] = round(now(), 3)
+            self.peer.put(summary_key(self.lot), summ)
+            time.sleep(P2P_GOSSIP_INTERVAL)
 
     # ---- status publishing ----
 
@@ -320,13 +383,14 @@ class LotServer:
 
     def run(self):
         self.replay_log()
-        self.info("listening on :%d | broker %s:%d | registry %s:%d | delta=%.0fs lease=%.0fs"
-                  % (self.port, self.broker[0], self.broker[1], self.registry[0], self.registry[1],
+        self.info("listening on :%d | broker %s:%d | registry %s | bootstrap %s | delta=%.0fs lease=%.0fs"
+                  % (self.port, self.broker[0], self.broker[1],
+                     ("%s:%d" % self.registry) if self.registry else "none", self.bootstrap or "auto",
                      STALENESS_DELTA, RESERVATION_LEASE))
         self.info(self.summary_text())
         self.subscriber.start()
         self.subscriber.subscribe(sensor_topic(self.lot))
-        threading.Thread(target=self.join_group, daemon=True).start()
+        self.join_overlay()
         threading.Thread(target=self.gossip_loop, daemon=True).start()
         threading.Thread(target=self.monitor_loop, daemon=True).start()
         try:
@@ -336,10 +400,13 @@ class LotServer:
         finally:
             self.stopping = True
             self.info("shutting down")
-            try:
-                group.leave(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.address, self.name, self.log)
-            except OSError:
-                pass
+            self.peer.leave()
+            self.peer.stop()
+            if self.registry:
+                try:
+                    group.leave(self.registry[0], self.registry[1], LOT_SERVER_GROUP, self.address, self.name, self.log)
+                except OSError:
+                    pass
             self.service.stop()
 
 
@@ -355,7 +422,9 @@ def main():
     ap.add_argument("--lot", required=True)
     ap.add_argument("--port", type=int)
     ap.add_argument("--broker", default="127.0.0.1:%d" % BROKER_PORT)
-    ap.add_argument("--registry", default="127.0.0.1:%d" % REGISTRY_PORT)
+    ap.add_argument("--registry", default="127.0.0.1:%d" % REGISTRY_PORT,
+                    help="directory used to find a bootstrap peer; 'none' to run without it")
+    ap.add_argument("--bootstrap", help="host:port of one running lot server to join the overlay through")
     ap.add_argument("--spaces", type=int, default=20)
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--fresh", action="store_true", help="delete the old log, start empty")
@@ -365,13 +434,18 @@ def main():
     if port is None:
         sys.exit("unknown lot %s, use --port" % args.lot)
 
+    registry = None if args.registry == "none" else hostport(args.registry, REGISTRY_PORT)
     server = LotServer(args.lot, port, hostport(args.broker, BROKER_PORT),
-                       hostport(args.registry, REGISTRY_PORT), args.spaces, args.workers)
+                       registry, args.spaces, args.workers, bootstrap=args.bootstrap)
     if args.fresh:
         try:
             os.remove(server.log.path)
         except FileNotFoundError:
             pass
+
+    def on_term(signum, frame):      # plain `kill` = graceful leave; `kill -9` = crash
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, on_term)
     server.run()
 
 
