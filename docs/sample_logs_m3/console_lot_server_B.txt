@@ -1,0 +1,19 @@
+[12:53:45] [lot_server_B] listening on :5002 | broker 127.0.0.1:5000 | registry 127.0.0.1:5010 | bootstrap 127.0.0.1:5001 | delta=6s lease=30s
+[12:53:45] [lot_server_B] Lot B: 0 free, 0 occupied, 0 reserved, 20 unknown
+[12:53:45] [lot_server_B] registered at registry: members now ['127.0.0.1:5001', '127.0.0.1:5002']
+[12:53:45] [lot_server_B] P2P JOIN via bootstrap 127.0.0.1:5001
+[12:53:45] [lot_server_B] P2P neighbor + A (127.0.0.1:5001), degree now 1
+[12:53:45] [lot_server_B] P2P took 1 replica(s) from 127.0.0.1:5001
+[12:53:45] [lot_server_B] P2P joined: neighbors ['A']
+[12:53:46] [lot_server_B] P2P neighbor + C (127.0.0.1:5003), degree now 2
+[12:53:46] [lot_server_B] P2P JOIN from C (127.0.0.1:5003): gave 1 neighbor pointer(s) and 2 table entries
+[12:53:46] [lot_server_B] P2P neighbor + D (127.0.0.1:5004), degree now 3
+[12:53:56] [lot_server_B] P2P LOOKUP lot/A/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid a92ab470)
+[12:53:56] [lot_server_B] P2P LOOKUP lot/A/summary: found at A after 1 hop(s) via B->A
+[12:53:56] [lot_server_B] P2P LOOKUP lot/C/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid 63fc2d7e)
+[12:53:56] [lot_server_B] P2P LOOKUP lot/C/summary: found at C after 1 hop(s) via B->C
+[12:53:56] [lot_server_B] P2P LOOKUP lot/D/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid 93a317d6)
+[12:53:56] [lot_server_B] P2P LOOKUP lot/D/summary: found at D after 1 hop(s) via B->D
+[12:53:56] [lot_server_B] P2P neighbor + E (127.0.0.1:5005), degree now 4
+[12:53:59] [lot_server_B] P2P neighbor - C (127.0.0.1:5003): left gracefully, degree now 3
+[12:54:05] [lot_server_B] P2P neighbor - D (127.0.0.1:5004): no answer to ping, dead pointer removed, degree now 2

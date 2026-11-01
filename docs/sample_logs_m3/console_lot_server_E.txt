@@ -1,0 +1,13 @@
+[12:53:56] [lot_server_E] listening on :5005 | broker 127.0.0.1:5000 | registry 127.0.0.1:5010 | bootstrap 127.0.0.1:5003 | delta=6s lease=30s
+[12:53:56] [lot_server_E] Lot E: 0 free, 0 occupied, 0 reserved, 20 unknown
+[12:53:56] [lot_server_E] registered at registry: members now ['127.0.0.1:5001', '127.0.0.1:5002', '127.0.0.1:5003', '127.0.0.1:5004', '127.0.0.1:5005']
+[12:53:56] [lot_server_E] P2P JOIN via bootstrap 127.0.0.1:5003
+[12:53:56] [lot_server_E] P2P neighbor + C (127.0.0.1:5003), degree now 1
+[12:53:56] [lot_server_E] P2P took 4 replica(s) from 127.0.0.1:5003
+[12:53:56] [lot_server_E] P2P neighbor + B (127.0.0.1:5002), degree now 2
+[12:53:56] [lot_server_E] P2P joined: neighbors ['B', 'C']
+[12:53:59] [lot_server_E] P2P neighbor - C (127.0.0.1:5003): left gracefully, degree now 1
+[12:54:01] [lot_server_E] P2P neighbor + A (127.0.0.1:5001), degree now 2
+[12:54:01] [lot_server_E] P2P random sampling: linked to A to keep the mesh connected
+[12:54:03] [lot_server_E] EVENT  E-20 -> free (seq 6)
+[12:54:04] [lot_server_E] EVENT  E-01 -> free (seq 8)

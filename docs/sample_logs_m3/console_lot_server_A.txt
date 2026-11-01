@@ -1,0 +1,25 @@
+[12:53:45] [lot_server_A] listening on :5001 | broker 127.0.0.1:5000 | registry 127.0.0.1:5010 | bootstrap auto | delta=6s lease=30s
+[12:53:45] [lot_server_A] Lot A: 0 free, 0 occupied, 0 reserved, 20 unknown
+[12:53:45] [lot_server_A] registered at registry: members now ['127.0.0.1:5001']
+[12:53:45] [lot_server_A] P2P first peer in the overlay, waiting for others to join
+[12:53:45] [lot_server_A] P2P neighbor + B (127.0.0.1:5002), degree now 1
+[12:53:45] [lot_server_A] P2P JOIN from B (127.0.0.1:5002): gave 0 neighbor pointer(s) and 1 table entries
+[12:53:46] [lot_server_A] P2P neighbor + C (127.0.0.1:5003), degree now 2
+[12:53:46] [lot_server_A] P2P neighbor + D (127.0.0.1:5004), degree now 3
+[12:53:46] [lot_server_A] P2P JOIN from D (127.0.0.1:5004): gave 2 neighbor pointer(s) and 3 table entries
+[12:53:50] [lot_server_A] EVENT  A-11 -> occupied (seq 3)
+[12:53:51] [lot_server_A] EVENT  A-18 -> occupied (seq 5)
+[12:53:55] [lot_server_A] FIND from driver1: 14 free
+[12:53:56] [lot_server_A] TOTAL across ['A', 'B', 'D', 'C']: 52 free of 80 (3 messages up the tree)
+[12:53:56] [lot_server_A] P2P LOOKUP lot/B/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid 841ec4e0)
+[12:53:56] [lot_server_A] P2P LOOKUP lot/B/summary: found at B after 1 hop(s) via A->B
+[12:53:56] [lot_server_A] P2P LOOKUP lot/C/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid 622fd2cd)
+[12:53:56] [lot_server_A] P2P LOOKUP lot/C/summary: found at C after 1 hop(s) via A->C
+[12:53:56] [lot_server_A] P2P LOOKUP lot/D/summary: owner only, flooding 3 neighbor(s) with TTL 3 (qid a15e8a79)
+[12:53:56] [lot_server_A] P2P LOOKUP lot/D/summary: found at D after 1 hop(s) via A->D
+[12:53:59] [lot_server_A] P2P neighbor - C (127.0.0.1:5003): left gracefully, degree now 2
+[12:54:01] [lot_server_A] P2P neighbor + E (127.0.0.1:5005), degree now 3
+[12:54:05] [lot_server_A] P2P neighbor - D (127.0.0.1:5004): no answer to ping, dead pointer removed, degree now 2
+[12:54:08] [lot_server_A] EVENT  A-10 -> occupied (seq 14)
+[12:54:09] [lot_server_A] FIND from driver1: 13 free
+[12:54:09] [lot_server_A] TOTAL across ['A', 'E', 'B']: 40 free of 60 (2 messages up the tree)

@@ -1,0 +1,13 @@
+Overlay: 3 nodes, 3 edges, connected
+  edges        : A-B, A-E, B-E
+  degree       : A=2, B=2, E=2  (avg 2.00)
+  diameter     : 1 hops   (longest shortest path)
+  avg path     : 1.00 hops
+Maintenance:
+  pings/round  : 6 (one per directed edge) every 5s = 1.20 msg/s for the whole overlay
+  gossip/put   : origin sends degree(n) copies, informed peers forward with p_f=0.7; re-gossip every 3s
+  P(no copy)   : A: (1-0.7)^2 = 0.090, B: (1-0.7)^2 = 0.090, E: (1-0.7)^2 = 0.090
+Counters since start:
+  A: gossip sent 67 recv 56 fwd 28 stale 0 | lookups sent 23 recv 20 dup 9 ttl0 1 | pings 11 failed 1 repairs 1
+  B: gossip sent 72 recv 66 fwd 33 stale 2 | lookups sent 21 recv 23 dup 12 ttl0 0 | pings 12 failed 1 repairs 1
+  E: gossip sent 23 recv 23 fwd 5 stale 0 | lookups sent 0 recv 0 dup 0 ttl0 0 | pings 3 failed 0 repairs 0
