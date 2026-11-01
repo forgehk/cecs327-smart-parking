@@ -19,9 +19,9 @@ status, user queries, reservations and system updates, and must include:
 | Parking-space status and user queries | done (M1) | lot server state table, `find` |
 | Reservations | done (M1) | `reserve` / `release`, 30 s lease |
 | Publish-subscribe messaging | done (M2) | broker, `lot/<lot>/sensor` and `lot/<lot>/status` topics |
-| Peer-to-peer integration | partial (M1, M2) | lot servers are a group at the registry and exchange summaries by group send |
-| Coordination among distributed nodes | not started | M3 |
-| Replicated status information | not started | M4 |
+| Peer-to-peer integration | done (M3) | unstructured overlay: join/leave, gossip, flood lookup, replicas (`prototype/p2p/`) |
+| Coordination among distributed nodes | partial (M3) | convergecast aggregation; election and ordering in M4/M5 |
+| Replicated status information | partial (M3) | every lot holds the others' summaries with versions and staleness; full tables in M4 |
 | Fault-tolerant sensor operation | partial (M1) | staleness -> unknown, log replay |
 
 ## Milestone 1 - Architecture and models (due Sep 24) - DONE
@@ -94,20 +94,47 @@ Not done / deferred:
 - UDP for heartbeats was considered and dropped: TCP already gives us framing and
   the loss we care about is simulated at the sensor (`--drop-rate`)
 
-## Milestone 3 - Peer-to-peer and coordination (tentative)
+## Milestone 3 - Peer-to-peer integration
 
-Goal: lot servers behave as real peers and coordinate on shared decisions.
+Goal: lot servers form a real P2P overlay. No coordinator, no global key ownership,
+nodes join and leave while the system runs, state is cached at peers.
 
-- [ ] peer discovery: servers find each other instead of a hard-coded port table
-- [ ] logical clocks (Lamport) on every message so events across lots can be ordered
-- [ ] coordinator election among lot servers (bully or ring) - the coordinator handles
-      cross-lot operations such as "reserve any free space on campus"
-- [ ] mutual exclusion for a shared resource that is NOT owned by a single lot
-      (e.g. a campus-wide reservation counter or a shared overflow lot)
-- [ ] failure of the coordinator -> re-election, shown in the demo
+Code - done (see `docs/P2P.md` for the design, trace and numbers):
 
-Report items: P2P organization, election algorithm, ordering of events, what happens
-when the coordinator dies.
+- [x] `p2p/overlay.py` - the middleware: `put` / `get` / `lookup` / `aggregate`
+- [x] unstructured mesh: short ad hoc neighbor lists, degree varies (3,2,3,2 on four lots)
+- [x] join through one bootstrap peer (`--bootstrap`, or the registry as a directory):
+      neighbor pointers plus the bootstrap's table handed over in one round trip
+- [x] graceful leave on SIGTERM / Ctrl-C: `degree` messages, neighbors drop the pointer
+- [x] crash repair: ping every 5 s, dead pointer removed; random peer sampling in every
+      ping answer keeps the mesh connected (shown in the trace: B and E re-link after C leaves)
+- [x] push gossip of summaries with versions, p_f = 0.7; stale rumors ignored;
+      anti-entropy via ping answers
+- [x] pull lookup: TTL flood, duplicates dropped by id, FOUND straight back to the asker
+      with the path; owner-only mode for measuring real overlay distance
+- [x] replica hosting: every lot holds the others' summaries, `find` answers from them,
+      flagged stale after 12 s; the lot keeps answering for a dead neighbor
+- [x] convergecast `total`: free spaces over every reachable lot, N-1 replies
+- [x] `p2p_metrics.py`: degree, edges, diameter, average path, lookup hops, stretch,
+      maintenance traffic, (1 - p_f)^n per node
+- [x] `run_demo.sh` runs four lots; a fifth joins live
+- [x] tests: `test_p2p.py` (27 checks), `run_tests.py` scenarios 5 and 8 (join / leave /
+      crash across five lots)
+- [x] `docs/MESSAGES.md` updated with the nine P2P message types, `docs/sample_logs_m3/`
+
+Report - to do (owner: BL, outline already written):
+
+- [ ] overlay topology section: numbers and the "why not a tree / Chord" paragraph from
+      `docs/P2P.md` section 1; stretch paragraph
+- [ ] peer responsibilities: the four-layer stack, queueing note (lambda < mu), hot-key note
+- [ ] join / leave: the design equation, the trace from `docs/P2P.md` section 3
+- [ ] lookup: push vs pull, (1 - 0.7)^3 = 0.027 worked example, flooding cost, convergecast
+- [ ] caching and consistency: the three questions, answered in `docs/P2P.md` section 5
+- [ ] evidence: `p2p_metrics.py` output and consoles from `docs/sample_logs_m3/`
+- [ ] video
+
+Deferred to M4 / M5 (not needed for the M3 outline): logical clocks, leader election,
+mutual exclusion, cross-lot transactions.
 
 ## Milestone 4 - Replication and consistency (tentative)
 

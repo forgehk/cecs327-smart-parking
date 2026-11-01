@@ -246,11 +246,99 @@ The examples below are real lines from `docs/sample_logs_m2/` (one log entry = `
 }
 ```
 
+## Peer-to-peer overlay (Milestone 3, lot server <-> lot server)
+
+All of these arrive on a lot server's normal port and are dispatched by type. JOIN,
+NEIGHBOR, PING are answered with an ACK on the same connection; GOSSIP, LOOKUP, FOUND,
+AGG and AGG_REPLY are one-way. Examples are from `docs/sample_logs_m3/`.
+
+Lot B joins through A:
+
+```json
+{"type": "P2P_JOIN", "msg_id": "958487fc", "sender": "lot_server_B", "timestamp": "2026-11-01T12:49:25.041",
+ "reply_to": null, "payload": {"id": "B", "address": "127.0.0.1:5002"}}
+```
+
+A's answer: a sample of its neighbors (none yet, B is the first) and its whole table:
+
+```json
+{"type": "ACK", "msg_id": "0a363886", "sender": "lot_server_A", "timestamp": "2026-11-01T12:49:25.042",
+ "reply_to": "958487fc",
+ "payload": {"status": "OK", "id": "A", "accepted": true, "neighbors": [],
+             "table": {"lot/A/summary": {"value": {"free": 0, "occupied": 0, "reserved": 0, "unknown": 20, "total": 20, "lot": "A", "ts": 1793566164.6},
+                                         "version": 1793566164600, "origin": "A", "ts": 1793566164.6}}}}
+```
+
+B asks E to be its neighbor (random sampling after C left); E accepts and sends its table:
+
+```json
+{"type": "P2P_NEIGHBOR", "msg_id": "535cbed7", "sender": "lot_server_B", "timestamp": "2026-11-01T12:49:40.061",
+ "reply_to": null, "payload": {"id": "B", "address": "127.0.0.1:5002"}}
+{"type": "ACK", "msg_id": "bac0c316", "sender": "lot_server_E", "timestamp": "2026-11-01T12:49:40.063",
+ "reply_to": "535cbed7", "payload": {"status": "OK", "id": "E", "accepted": true, "table": {"lot/A/summary": "...", "lot/B/summary": "...", "lot/C/summary": "...", "lot/D/summary": "...", "lot/E/summary": "..."}}}
+```
+
+C leaves gracefully (one of these to each neighbor, no reply):
+
+```json
+{"type": "P2P_LEAVE", "msg_id": "8d4e4e6f", "sender": "lot_server_C", "timestamp": "2026-11-01T12:49:38.232",
+ "reply_to": null, "payload": {"id": "C", "address": "127.0.0.1:5003"}}
+```
+
+A pings B every 5 s; the ACK carries B's degree, a random sample of B's other neighbors
+(peer sampling) and B's table (anti-entropy):
+
+```json
+{"type": "P2P_PING", "msg_id": "06a545c5", "sender": "lot_server_A", "timestamp": "2026-11-01T12:49:29.427",
+ "reply_to": null, "payload": {"id": "A", "address": "127.0.0.1:5001"}}
+{"type": "ACK", "msg_id": "05ab51f9", "sender": "lot_server_B", "timestamp": "2026-11-01T12:49:29.429",
+ "reply_to": "06a545c5",
+ "payload": {"status": "OK", "id": "B", "degree": 2, "sample": [{"address": "127.0.0.1:5003", "id": "C"}],
+             "table": {"lot/A/summary": "...", "lot/B/summary": "...", "lot/C/summary": "...", "lot/D/summary": "..."}}}
+```
+
+A rumor: C put its summary, A got it and forwards it (hop 1, path C->A). The same
+msg_id travels with the rumor so a peer that sees it twice drops it:
+
+```json
+{"type": "P2P_GOSSIP", "msg_id": "1180831f", "sender": "lot_server_A", "timestamp": "2026-11-01T12:49:25.643",
+ "reply_to": null,
+ "payload": {"key": "lot/C/summary",
+             "value": {"free": 0, "occupied": 0, "reserved": 0, "unknown": 20, "total": 20, "lot": "C", "ts": 1793566165.642},
+             "version": 1793566165642, "origin": "C", "hop": 1, "path": ["C", "A"]}}
+```
+
+A lookup D started for lot B's summary (owner only), as forwarded by A with the TTL
+already decremented, and B's answer sent straight back to D:
+
+```json
+{"type": "P2P_LOOKUP", "msg_id": "904cd5c0", "sender": "lot_server_A", "timestamp": "2026-11-01T12:49:38.056",
+ "reply_to": null,
+ "payload": {"qid": "02d26837", "key": "lot/B/summary", "ttl": 2, "asker": "127.0.0.1:5004", "path": ["D", "A"], "fresh": true}}
+{"type": "P2P_FOUND", "msg_id": "a0ddc60a", "sender": "lot_server_B", "timestamp": "2026-11-01T12:49:38.058",
+ "reply_to": null,
+ "payload": {"qid": "02d26837", "key": "lot/B/summary",
+             "value": {"free": 12, "occupied": 8, "reserved": 0, "unknown": 0, "total": 20, "lot": "B", "ts": 1793566177.054},
+             "version": 1793566177054, "origin": "B", "holder": "B", "hops": 2, "path": ["D", "A", "B"]}}
+```
+
+Convergecast: A is the root; B already heard this qid from someone else, so it answers
+`dup` at once instead of making A wait:
+
+```json
+{"type": "P2P_AGG", "msg_id": "222ee530", "sender": "lot_server_A", "timestamp": "2026-11-01T12:49:38.123",
+ "reply_to": null, "payload": {"qid": "3a3c0f16", "root": "127.0.0.1:5001", "parent": "127.0.0.1:5001", "ttl": 3}}
+{"type": "P2P_AGG_REPLY", "msg_id": "1d1887a4", "sender": "lot_server_B", "timestamp": "2026-11-01T12:49:38.128",
+ "reply_to": null, "payload": {"qid": "3a3c0f16", "child": "127.0.0.1:5002", "dup": true}}
+```
+
+A real (non-dup) AGG_REPLY carries `{"qid", "child", "lots": ["C", "D"], "free": 26, "total": 40, "messages": 1}`.
+
 ## Payloads
 
 | type | payload | answered by |
 |---|---|---|
-| REQUEST | `{"op": "find"\|"reserve"\|"release", "args": {"client": ..., "space": ...}}` | REPLY |
+| REQUEST | `{"op": "find"\|"reserve"\|"release"\|"lookup"\|"peers"\|"total", "args": {...}}` | REPLY |
 | REPLY | `{"status": "OK", "result": {...}}` or `{"status": "ERROR", "error": "text"}`; `duplicate: true` on a cached retry | - |
 | SUBSCRIBE / UNSUBSCRIBE | `{"topic": "lot/A/sensor"}` | ACK |
 | PUBLISH | `{"topic": ..., "data": {...}}` | ACK `{"delivered": n}` |
@@ -258,6 +346,15 @@ The examples below are real lines from `docs/sample_logs_m2/` (one log entry = `
 | JOIN / LEAVE | `{"group": "lot_servers", "address": "127.0.0.1:5001"}` | ACK |
 | MEMBERS | `{"group": ...}` | ACK `{"members": [...]}` |
 | GROUP_MSG | `{"group": ..., "data": {...}}` | - |
+| P2P_JOIN | `{"id": "B", "address": "127.0.0.1:5002"}` | ACK `{"id", "accepted", "neighbors": [...], "table": {...}}` |
+| P2P_NEIGHBOR | `{"id", "address"}` | ACK `{"id", "accepted", "table"}` |
+| P2P_LEAVE | `{"id", "address"}` | - |
+| P2P_PING | `{"id", "address"}` | ACK `{"id", "degree", "sample": [...], "table"}` |
+| P2P_GOSSIP | `{"key", "value", "version", "origin", "hop", "path"}` | - |
+| P2P_LOOKUP | `{"qid", "key", "ttl", "asker", "path", "fresh"}` | P2P_FOUND to the asker |
+| P2P_FOUND | `{"qid", "key", "value", "version", "origin", "holder", "hops", "path"}` | - |
+| P2P_AGG | `{"qid", "root", "parent", "ttl"}` | P2P_AGG_REPLY to the parent |
+| P2P_AGG_REPLY | `{"qid", "child", "lots", "free", "total", "messages"}` or `{"qid", "child", "dup": true}` | - |
 
 Business outcomes are inside `result`, not in `status`: a denied reservation is
 `status: OK, result: {granted: false, reason: "reserved"}`. `status: ERROR` is only for
@@ -269,7 +366,8 @@ protocol problems (unknown operation, bad arguments, handler crash).
 |---|---|---|---|
 | `lot/<lot>/sensor` | sensor node | that lot's server | `{"type": "heartbeat", "seq", "spaces": {...}}` or `{"type": "event", "seq", "space", "state"}` |
 | `lot/<lot>/status` | lot server | `client.py watch`, anyone | `{"space", "state", "reserved_by", "publisher"}` |
-| group `lot_servers` | every lot server | every lot server | `{"kind": "summary", "lot", "free", "occupied", "reserved", "unknown", "total"}` |
+| group `lot_servers` | every lot server | registry only | membership directory; since Milestone 3 used to find a bootstrap peer |
+| overlay key `lot/<lot>/summary` | that lot's server (put every 3 s) | every lot server (replica) | `{"free", "occupied", "reserved", "unknown", "total", "lot", "ts"}` with a version |
 
 ## Log line format
 
