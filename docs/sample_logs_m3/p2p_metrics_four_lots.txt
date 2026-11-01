@@ -1,0 +1,28 @@
+Overlay: 4 nodes, 5 edges, connected
+  edges        : A-B, A-C, A-D, B-C, B-D
+  degree       : A=3, B=3, C=2, D=2  (avg 2.50)
+  diameter     : 2 hops   (longest shortest path)
+  avg path     : 1.17 hops
+Maintenance:
+  pings/round  : 10 (one per directed edge) every 5s = 2.00 msg/s for the whole overlay
+  gossip/put   : origin sends degree(n) copies, informed peers forward with p_f=0.7; re-gossip every 3s
+  P(no copy)   : A: (1-0.7)^3 = 0.027, B: (1-0.7)^3 = 0.027, C: (1-0.7)^2 = 0.090, D: (1-0.7)^2 = 0.090
+Lookups (owner-only, cache bypassed, TTL 3): 12 run, 100% found
+  A asks for B: 1 hop(s) via A->B, 3 msg sent by asker
+  A asks for C: 1 hop(s) via A->C, 3 msg sent by asker
+  A asks for D: 1 hop(s) via A->D, 3 msg sent by asker
+  B asks for A: 1 hop(s) via B->A, 3 msg sent by asker
+  B asks for C: 1 hop(s) via B->C, 3 msg sent by asker
+  B asks for D: 1 hop(s) via B->D, 3 msg sent by asker
+  C asks for A: 1 hop(s) via C->A, 2 msg sent by asker
+  C asks for B: 1 hop(s) via C->B, 2 msg sent by asker
+  C asks for D: 2 hop(s) via C->A->D, 2 msg sent by asker
+  D asks for A: 1 hop(s) via D->A, 2 msg sent by asker
+  D asks for B: 1 hop(s) via D->B, 2 msg sent by asker
+  D asks for C: 2 hop(s) via D->A->C, 2 msg sent by asker
+  avg hops 1.17, max 2, avg msgs sent by asker 2.50, avg stretch 1.00
+Counters since start:
+  A: gossip sent 33 recv 30 fwd 15 stale 0 | lookups sent 23 recv 20 dup 9 ttl0 1 | pings 6 failed 0 repairs 0
+  B: gossip sent 36 recv 32 fwd 17 stale 0 | lookups sent 21 recv 23 dup 12 ttl0 0 | pings 6 failed 0 repairs 0
+  C: gossip sent 21 recv 23 fwd 7 stale 0 | lookups sent 13 recv 15 dup 5 ttl0 0 | pings 2 failed 0 repairs 0
+  D: gossip sent 18 recv 23 fwd 4 stale 1 | lookups sent 15 recv 14 dup 5 ttl0 0 | pings 2 failed 0 repairs 0

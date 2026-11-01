@@ -1,0 +1,59 @@
+$ python3 client.py find
+[12:53:55] [client driver1] -> find  (msg_id 2052776e) to 127.0.0.1:5001
+[12:53:55] [client driver1] <- OK Lot A: 14 free, 6 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-08, A-10, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 1.0s old
+   Lot C: 11 free, 0 unknown - 0.4s old
+   Lot D: 15 free, 0 unknown - 2.8s old
+
+$ python3 client.py peers
+[12:53:55] [client driver1] -> peers  (msg_id d5515550) to 127.0.0.1:5001
+[12:53:55] [client driver1] <- OK lot A at 127.0.0.1:5001: degree 3 (target 2), p_f 0.7
+   neighbors: B (127.0.0.1:5002), C (127.0.0.1:5003), D (127.0.0.1:5004)
+   replica lot/B/summary    from B: 12 free, 1.0s old
+   replica lot/C/summary    from C: 11 free, 0.5s old
+   replica lot/D/summary    from D: 15 free, 2.8s old
+   counters: gossip sent 32 recv 28 fwd 14 stale 0 | lookups sent 0 recv 0 dup 0 ttl0 0 | pings 6 failed 0 repairs 0
+
+$ python3 client.py --lot D lookup B --no-cache --fresh
+[12:53:55] [client driver1] -> lookup B (msg_id d5c4d6a9) to 127.0.0.1:5004
+[12:53:55] [client driver1] <- OK Lot B: 12 free, 0 unknown (version 1793566434806) from B after 1 hop(s), path D->B, 2 message(s) sent
+
+$ python3 client.py lookup D
+[12:53:55] [client driver1] -> lookup D (msg_id f872306f) to 127.0.0.1:5001
+[12:53:55] [client driver1] <- OK Lot D: 15 free, 0 unknown (version 1793566432996) from local cache (0 hops)
+
+$ python3 client.py --lot D lookup B --no-cache --ttl 1
+[12:53:56] [client driver1] -> lookup B (msg_id b6bcf9ac) to 127.0.0.1:5004
+[12:53:56] [client driver1] <- OK Lot B: 12 free, 0 unknown (version 1793566434806) from B after 1 hop(s), path D->B, 2 message(s) sent
+
+$ python3 client.py total
+[12:53:56] [client driver1] -> total  (msg_id 770b377e) to 127.0.0.1:5001
+[12:53:56] [client driver1] <- OK 52 free of 80 across lots A,B,D,C (3 message(s) up the tree)
+$ python3 lot_server.py --lot E --bootstrap 127.0.0.1:5003   (plus sensor_node.py --lot E)
+
+$ python3 client.py --lot E peers
+[12:53:59] [client driver1] -> peers  (msg_id 7715127b) to 127.0.0.1:5005
+[12:53:59] [client driver1] <- OK lot E at 127.0.0.1:5005: degree 2 (target 2), p_f 0.7
+   neighbors: B (127.0.0.1:5002), C (127.0.0.1:5003)
+   replica lot/A/summary    from A: 14 free, 2.1s old
+   replica lot/B/summary    from B: 12 free, 1.5s old
+   replica lot/C/summary    from C: 10 free, 0.9s old
+   replica lot/D/summary    from D: 14 free, 0.3s old
+   counters: gossip sent 7 recv 8 fwd 1 stale 0 | lookups sent 0 recv 0 dup 0 ttl0 0 | pings 0 failed 0 repairs 0
+
+$ kill $(cat run/lot_server_C.pid)        # graceful leave
+$ kill -9 $(cat run/lot_server_D.pid)     # crash
+
+$ python3 client.py find         # 10 s later
+[12:54:09] [client driver1] -> find  (msg_id 6722478b) to 127.0.0.1:5001
+[12:54:09] [client driver1] <- OK Lot A: 13 free, 7 occupied, 0 reserved, 0 unknown
+   free spaces: A-01, A-03, A-04, A-05, A-06, A-07, A-08, A-12, A-13, A-14, A-15, A-16, A-20
+   Lot B: 12 free, 0 unknown - 2.5s old
+   Lot C: 10 free, 0 unknown - 10.9s old
+   Lot D: 14 free, 0 unknown - 10.3s old
+   Lot E: 15 free, 0 unknown - 1.1s old
+
+$ python3 client.py total
+[12:54:09] [client driver1] -> total  (msg_id 496021e6) to 127.0.0.1:5001
+[12:54:09] [client driver1] <- OK 40 free of 60 across lots A,E,B (2 message(s) up the tree)

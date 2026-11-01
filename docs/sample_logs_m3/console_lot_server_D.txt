@@ -1,0 +1,21 @@
+[12:53:46] [lot_server_D] listening on :5004 | broker 127.0.0.1:5000 | registry 127.0.0.1:5010 | bootstrap 127.0.0.1:5001 | delta=6s lease=30s
+[12:53:46] [lot_server_D] Lot D: 0 free, 0 occupied, 0 reserved, 20 unknown
+[12:53:46] [lot_server_D] registered at registry: members now ['127.0.0.1:5001', '127.0.0.1:5002', '127.0.0.1:5003', '127.0.0.1:5004']
+[12:53:46] [lot_server_D] P2P JOIN via bootstrap 127.0.0.1:5001
+[12:53:46] [lot_server_D] P2P neighbor + A (127.0.0.1:5001), degree now 1
+[12:53:46] [lot_server_D] P2P took 3 replica(s) from 127.0.0.1:5001
+[12:53:46] [lot_server_D] P2P neighbor + B (127.0.0.1:5002), degree now 2
+[12:53:46] [lot_server_D] P2P joined: neighbors ['A', 'B']
+[12:53:50] [lot_server_D] EVENT  D-09 -> occupied (seq 3)
+[12:53:55] [lot_server_D] P2P LOOKUP lot/B/summary: owner only, flooding 2 neighbor(s) with TTL 3 (qid 90103e59)
+[12:53:55] [lot_server_D] P2P LOOKUP lot/B/summary: found at B after 1 hop(s) via D->B
+[12:53:56] [lot_server_D] P2P LOOKUP lot/B/summary: owner only, flooding 2 neighbor(s) with TTL 1 (qid efdd4d26)
+[12:53:56] [lot_server_D] P2P LOOKUP lot/B/summary: found at B after 1 hop(s) via D->B
+[12:53:56] [lot_server_D] P2P LOOKUP lot/A/summary: owner only, flooding 2 neighbor(s) with TTL 3 (qid 21a91aca)
+[12:53:56] [lot_server_D] P2P LOOKUP lot/A/summary: found at A after 1 hop(s) via D->A
+[12:53:56] [lot_server_D] P2P LOOKUP lot/B/summary: owner only, flooding 2 neighbor(s) with TTL 3 (qid 8d375d40)
+[12:53:56] [lot_server_D] P2P LOOKUP lot/B/summary: found at B after 1 hop(s) via D->B
+[12:53:56] [lot_server_D] P2P LOOKUP lot/C/summary: owner only, flooding 2 neighbor(s) with TTL 3 (qid cb344e9b)
+[12:53:56] [lot_server_D] P2P LOOKUP lot/C/summary: found at C after 2 hop(s) via D->A->C
+[12:53:57] [lot_server_D] P2P took 1 replica(s) from 127.0.0.1:5001
+[12:53:57] [lot_server_D] EVENT  D-20 -> occupied (seq 8)
