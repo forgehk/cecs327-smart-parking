@@ -26,6 +26,11 @@ TYPES = {
     "SUBSCRIBE", "UNSUBSCRIBE", "PUBLISH", "EVENT", "ACK",
     # group communication
     "JOIN", "LEAVE", "MEMBERS", "GROUP_MSG",
+    # peer-to-peer overlay (Milestone 3)
+    "P2P_JOIN", "P2P_NEIGHBOR", "P2P_LEAVE", "P2P_PING",   # membership and maintenance, each answered by ACK
+    "P2P_GOSSIP",                                          # push: rumor with a versioned value, no reply
+    "P2P_LOOKUP", "P2P_FOUND",                             # pull: TTL flood and the answer sent back to the asker
+    "P2P_AGG", "P2P_AGG_REPLY",                            # convergecast over a spanning tree
 }
 
 
