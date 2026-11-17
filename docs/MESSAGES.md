@@ -406,6 +406,86 @@ the same connection (`coord/wire.py`). Priority is the lot letter: E > D > C > B
 }
 ```
 
+## Mutual exclusion (Milestone 4, lot server <-> the leader)
+
+Centralized algorithm (`coord/mutex.py`); the leader is the coordinator. It protects the
+shared overflow garage table (`overflow.py`, resource name `overflow`).
+
+| type | from -> to | payload | ACK payload |
+|---|---|---|---|
+| `MUTEX_REQUEST` | requester -> leader | `resource`, `node`, `address`, `req_id`, `ts` (the requester's Lamport time for the request, kept if it is re-sent to a new leader) | `granted` true, or false with `holder`, `position`, `queue` ordered by `(ts, node)`; `status` `RECOVERING` / `NOT_LEADER` = ask again |
+| `MUTEX_GRANT` | leader -> next in line | `resource`, `req_id`, `ts`, `coordinator` | `accepted`: false if it is not from the node the requester thinks leads, or it no longer waits |
+| `MUTEX_RELEASE` | holder -> leader | `resource`, `node`, `req_id` (also withdraws a request that gave up) | `{"status": "OK"}` |
+| `MUTEX_STATE` | new leader -> every node | `coordinator` | `node`, `address`, `holding` and `waiting` lists of `{resource, req_id, ts}` |
+
+### MUTEX_REQUEST  (from `lot_server_A.log`, dir=send)
+
+```json
+{
+  "type": "MUTEX_REQUEST",
+  "msg_id": "cd05e05d",
+  "sender": "lot_server_A",
+  "timestamp": "2026-11-17T01:45:19.612",
+  "lamport": 74,
+  "reply_to": null,
+  "payload": {"resource": "overflow", "node": "A", "address": "127.0.0.1:5001", "req_id": "d148b04e", "ts": 73}
+}
+```
+
+### ACK to MUTEX_REQUEST, queued  (from the requester's log, dir=recv)
+
+```json
+{
+  "type": "ACK",
+  "msg_id": "ce44fe58",
+  "sender": "lot_server_C",
+  "timestamp": "2026-11-17T01:45:20.899",
+  "lamport": 125,
+  "reply_to": "6484e247",
+  "payload": {"status": "OK", "granted": false, "holder": "C", "position": 2, "queue": ["B(ts=103)", "A(ts=119)"]}
+}
+```
+
+### MUTEX_RELEASE  (from `lot_server_A.log`, dir=send)
+
+```json
+{
+  "type": "MUTEX_RELEASE",
+  "msg_id": "04de608c",
+  "sender": "lot_server_A",
+  "timestamp": "2026-11-17T01:45:20.152",
+  "lamport": 89,
+  "reply_to": null,
+  "payload": {"resource": "overflow", "node": "A", "req_id": "d148b04e"}
+}
+```
+
+### After the coordinator crashed: MUTEX_STATE, A's answer, and the GRANT of that same request
+
+New leader B asks every node (`lot_server_B.log`, dir=send):
+
+```json
+{"type": "MUTEX_STATE", "msg_id": "cf098306", "sender": "lot_server_B", "timestamp": "2026-11-17T01:45:27.191",
+ "lamport": 286, "reply_to": null, "payload": {"coordinator": "B"}}
+```
+
+A is still waiting with the request it made before the crash (`lot_server_A.log`, dir=send):
+
+```json
+{"type": "ACK", "msg_id": "006728b7", "sender": "lot_server_A", "timestamp": "2026-11-17T01:45:27.200",
+ "lamport": 288, "reply_to": "cf098306",
+ "payload": {"status": "OK", "node": "A", "address": "127.0.0.1:5001", "holding": [],
+             "waiting": [{"resource": "overflow", "req_id": "390ee355", "ts": 238}]}}
+```
+
+B queues it with its original `ts` and later grants exactly that request (`lot_server_B.log`, dir=send):
+
+```json
+{"type": "MUTEX_GRANT", "msg_id": "1d1d703e", "sender": "lot_server_B", "timestamp": "2026-11-17T01:45:28.211",
+ "lamport": 305, "reply_to": null,
+ "payload": {"resource": "overflow", "req_id": "390ee355", "ts": 238, "coordinator": "B"}}
+```
+
 ## Payloads
 
 | type | payload | answered by |

@@ -36,7 +36,7 @@ from coord import wire
 
 
 class Election:
-    def __init__(self, node_id, address, members, service, log, info=print, on_change=None,
+    def __init__(self, node_id, address, members, service, log, info=print, on_change=None, on_elected=None,
                  answer_timeout=ELECTION_ANSWER_TIMEOUT, coordinator_timeout=COORDINATOR_TIMEOUT,
                  check_interval=LEADER_CHECK_INTERVAL, ping_timeout=LEADER_PING_TIMEOUT):
         self.id = node_id                    # "A", "B", ...: also the Bully priority
@@ -46,6 +46,7 @@ class Election:
         self.sender = log.process            # name in our envelopes, e.g. lot_server_A
         self.info = info
         self.on_change = on_change           # called as on_change(old_leader, new_leader)
+        self.on_elected = on_elected         # called on the winner once every live node has ACKed COORDINATOR
         self.answer_timeout = answer_timeout
         self.coordinator_timeout = coordinator_timeout
         self.check_interval = check_interval
@@ -138,6 +139,10 @@ class Election:
                             self.sender, self.log, want_ack=True, timeout=self.answer_timeout)
         heard = sorted(i for i in others if res.get(self.members[i]))
         self.info("COORDINATOR acknowledged by %s" % (", ".join(heard) or "nobody (alone)"))
+        # every node that ACKed has already switched to us (on_coordinator sets the
+        # leader before it answers), so nobody still treats the old leader as coordinator
+        if self.on_elected and self.is_leader():
+            self.on_elected()
         return res
 
     # ------------------------------------------------------------------ messages from other nodes
@@ -151,19 +156,20 @@ class Election:
 
     def on_coordinator(self, msg, conn):
         p = msg["payload"]
-        wire.ack(conn, msg, {"status": "OK", "id": self.id}, self.sender, self.log)
         with self.lock:
             self.stats["coordinator_recv"] += 1
         lid = p.get("id")
-        if lid is None:
-            return
-        if lid < self.id and not self.stopping:
+        if lid is not None and lid < self.id and not self.stopping:
             # a lower node thinks it won (it didn't hear from us): bully it
+            wire.ack(conn, msg, {"status": "OK", "id": self.id}, self.sender, self.log)
             self.info("COORDINATOR from %s, but my id is higher -> new election" % lid)
             self.trigger("lower node %s claimed leadership" % lid)
             return
-        self._set_leader(lid, p.get("address"), "COORDINATOR from %s" % lid)
-        if lid > self.id:
+        if lid is not None:
+            # switch first, then ACK: when the winner has all ACKs, every one of us has switched
+            self._set_leader(lid, p.get("address"), "COORDINATOR from %s" % lid)
+        wire.ack(conn, msg, {"status": "OK", "id": self.id}, self.sender, self.log)
+        if lid is not None and lid > self.id:
             self.got_coordinator.set()
 
     def on_leader_ping(self, msg, conn):

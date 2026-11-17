@@ -37,6 +37,8 @@ TYPES = {
     "P2P_AGG", "P2P_AGG_REPLY",                            # convergecast over a spanning tree
     # coordination (Milestone 4)
     "ELECTION", "COORDINATOR", "LEADER_PING",              # Bully election, each answered by ACK
+    "MUTEX_REQUEST", "MUTEX_GRANT", "MUTEX_RELEASE",       # centralized mutual exclusion, the leader coordinates
+    "MUTEX_STATE",                                         # a new coordinator asks every node what it holds / waits for
 }
 
 

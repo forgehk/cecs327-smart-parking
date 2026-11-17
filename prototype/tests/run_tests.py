@@ -401,8 +401,46 @@ def scenario_9():
     kill_all()
 
 
+def race(*args):
+    r = subprocess.run([PY, os.path.join(PROTO, "mutex_race.py"), *args], cwd=PROTO,
+                       capture_output=True, text=True, timeout=120)
+    with open(os.path.join(OUT, "mutex_race.out"), "a") as f:
+        f.write("$ mutex_race.py %s\n%s\n" % (" ".join(args), r.stdout + r.stderr))
+    return r.returncode, r.stdout
+
+
+def scenario_10():
+    print("\n[10] Mutual exclusion on the shared overflow garage: the conflict, the lock, and the coordinator crashing (Milestone 4)")
+    fresh_logs()
+    start_infra()
+    for lot in "ABC":
+        start_lot(lot)
+    took, v = wait_leader("ABC", "C")
+    check(took is not None, "C is the leader, so it coordinates the lock: %s" % v)
+
+    code, out = race("--no-lock")
+    check(code == 3 and "CONFLICT" in out and "LOST UPDATE" in out,
+          "WITHOUT the lock 6 simultaneous requests through A, B, C double-book the overflow garage")
+    code, out = race()
+    check(code == 0 and "no conflict: 5 driver(s) got 5 different space(s)" in out,
+          "WITH the lock the same race gives 5 different spaces, 1 'full', and the table agrees")
+    check("MUTEX[coord] overflow: REQUEST from" in console("C") and "queued behind" in console("C"),
+          "C's console shows requests queued behind the holder")
+    enters = [l for l in console("A").splitlines() + console("B").splitlines() + console("C").splitlines() if "CS enter overflow" in l]
+    check(len(enters) >= 6, "each lot server logs entering the critical section (%d enters)" % len(enters))
+
+    code, out = race("--drivers", "8", "--kill-leader", "0.6")
+    check(code == 0 and "killed the leader, lot C" in out and "the leader is now lot B" in out
+          and "no conflict" in out,
+          "the coordinator C is killed 0.6 s into a race: B takes over and the race still ends without a conflict")
+    check("I coordinate now; state from" in console("B"), "B rebuilt the lock state from MUTEX_STATE before granting")
+    order = subprocess.run([PY, os.path.join(PROTO, "event_order.py"), "--check"], cwd=PROTO, capture_output=True, text=True)
+    check(order.returncode == 0, "every lock message is received after it was sent (event_order.py --check)")
+    kill_all()
+
+
 SCEN = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4, 5: scenario_5, 6: scenario_6, 7: scenario_7, 8: scenario_8,
-        9: scenario_9}
+        9: scenario_9, 10: scenario_10}
 
 if __name__ == "__main__":
     which = [int(x) for x in sys.argv[1:]] or sorted(SCEN)

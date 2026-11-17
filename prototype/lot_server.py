@@ -26,6 +26,9 @@ How it talks to everyone else:
     us          <-> every lot server  Bully election (Milestone 4, coord/election.py): the
                                       highest live lot is the leader (coordinator); followers
                                       ping it and elect a new one when it stops answering.
+    us          <-> the leader        centralized mutual exclusion (coord/mutex.py): to change
+                                      the shared overflow garage (overflow.py) we REQUEST the
+                                      lock from the leader, wait for the GRANT, RELEASE after.
 
 Software stack on each lot server:
 
@@ -47,10 +50,12 @@ import time
 
 from comm import group, pubsub, request_reply
 from comm.request_reply import BadRequest
-from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, P2P_GOSSIP_INTERVAL, P2P_LOOKUP_TTL,
+from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, MUTEX_WAIT, P2P_GOSSIP_INTERVAL, P2P_LOOKUP_TTL,
                     REGISTRY_PORT, RESERVATION_LEASE, STALENESS_DELTA,
                     MessageLog, now, sensor_topic, status_topic, ts_str)
 from coord.election import Election
+from coord.mutex import Mutex
+from overflow import OverflowTable
 from p2p.overlay import Peer
 
 
@@ -122,9 +127,16 @@ class LotServer:
         # exist; the ones that are down just don't answer.
         members = {l: "127.0.0.1:%d" % p for l, p in LOT_PORTS.items()}
         members[lot] = self.address
-        self.election = Election(lot, self.address, members, self.service, self.log, info=self.info)
+        self.election = Election(lot, self.address, members, self.service, self.log, info=self.info,
+                                 on_change=self.on_leader_change, on_elected=self.on_elected)
         self.service.register("leader", self.op_leader)
         self.service.register("elect", self.op_elect)
+
+        # centralized mutual exclusion (Milestone 4): the leader is the lock coordinator.
+        # It protects the shared overflow garage table that every lot server writes.
+        self.mutex = Mutex(lot, self.address, self.election, self.service, self.log, info=self.info)
+        self.overflow = OverflowTable()
+        self.service.register("overflow", self.op_overflow)
 
         self.subscriber = pubsub.Subscriber(broker[0], broker[1], self.name, self.log, self.on_sensor_event)
         self.publisher = pubsub.Publisher(broker[0], broker[1], self.name, self.log)
@@ -299,15 +311,62 @@ class LotServer:
     # ---- leader election (Milestone 4) ----
 
     def op_leader(self, args, req):
-        """Who we believe the leader (coordinator) is, and our election counters."""
+        """Who we believe the leader (coordinator) is, our election counters, and the
+        lock state (holders and queue if we coordinate, what we hold or wait for)."""
         s = self.election.status()
         s["op"] = "leader"
+        s["mutex"] = self.mutex.status()
+        s["pid"] = os.getpid()                      # lets mutex_race.py --kill-leader crash us on cue
         return s
 
     def op_elect(self, args, req):
         """Start an election now (for the demo); the reply comes back right away."""
         started = self.election.trigger("requested by %s" % args.get("client", "a client"))
         return {"op": "elect", "id": self.lot, "started": started}
+
+    def on_leader_change(self, old, new):
+        self.mutex.on_leader_change(old, new)
+
+    def on_elected(self):
+        self.mutex.become_coordinator()
+
+    # ---- the shared overflow garage, inside the distributed lock (Milestone 4) ----
+
+    def op_overflow(self, args, req):
+        """action assign / release / status / reset on the shared overflow table.
+        Everything but status runs inside the distributed critical section.
+        no_lock=True skips the lock: only for showing the conflict it prevents."""
+        client = args.get("client")
+        action = args.get("action") or "assign"
+        if action not in ("assign", "release", "status", "reset"):
+            raise BadRequest("action must be assign, release, status or reset")
+        if action in ("assign", "release") and not client:
+            raise BadRequest("missing client")
+        if action == "status":                      # a read: no lock, may be a moment old
+            return dict(self.overflow.summary(), op="overflow", action="status")
+        no_lock = bool(args.get("no_lock"))
+        t0 = now()
+        if no_lock:
+            self.info("OVERFLOW %s for %s WITHOUT the lock (demo of the conflict)" % (action, client))
+        elif not self.mutex.acquire("overflow", MUTEX_WAIT):
+            return {"op": "overflow", "action": action, "client": client, "granted": False,
+                    "reason": "no lock within %.0fs (no coordinator?)" % MUTEX_WAIT}
+        try:
+            self.info("CS enter overflow: %s for %s" % (action, client))
+            if action == "reset":
+                t = self.overflow.reset(self.name)
+                sid, reason, version = None, "reset to %d free spaces" % t["capacity"], t["version"]
+            elif action == "assign":
+                sid, reason, version = self.overflow.assign(client, self.name)
+            else:
+                sid, reason, version = self.overflow.release(client, self.name)
+            self.info("CS exit  overflow: %s %s -> %s (table version %d)" % (action, client, sid or reason, version))
+        finally:
+            if not no_lock:
+                self.mutex.release("overflow")
+        return {"op": "overflow", "action": action, "client": client, "lot": self.lot, "space": sid,
+                "granted": sid is not None or action == "reset", "reason": reason, "version": version,
+                "locked": not no_lock, "waited": round(now() - t0, 2), "lamport": self.log.clock.now()}
 
     def find_bootstrap(self):
         """--bootstrap wins. Otherwise ask the registry (the Milestone 2 group) who is
@@ -425,6 +484,7 @@ class LotServer:
         self.join_overlay()
         threading.Thread(target=self.gossip_loop, daemon=True).start()
         threading.Thread(target=self.monitor_loop, daemon=True).start()
+        self.mutex.start()
         self.election.start()
         try:
             self.service.serve_forever()
@@ -433,6 +493,7 @@ class LotServer:
         finally:
             self.stopping = True
             self.election.stop()
+            self.mutex.stop()
             self.info("shutting down")
             self.peer.leave()
             self.peer.stop()
@@ -460,7 +521,7 @@ def main():
                     help="directory used to find a bootstrap peer; 'none' to run without it")
     ap.add_argument("--bootstrap", help="host:port of one running lot server to join the overlay through")
     ap.add_argument("--spaces", type=int, default=20)
-    ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--workers", type=int, default=16, help="request threads; overflow requests may wait for the lock in one")
     ap.add_argument("--fresh", action="store_true", help="delete the old log, start empty")
     args = ap.parse_args()
 

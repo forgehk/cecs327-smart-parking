@@ -50,6 +50,14 @@ ELECTION_ANSWER_TIMEOUT = 1.0     # how long to wait for a higher node to answer
 COORDINATOR_TIMEOUT = 3.0         # after a higher node answered: wait this long for its COORDINATOR
 LEADER_CHECK_INTERVAL = 2.0       # how often a follower pings the leader
 LEADER_PING_TIMEOUT = 1.0         # no answer within this -> the leader is considered dead
+MUTEX_WAIT = 15.0                 # a lot server gives up waiting for the lock after this
+MUTEX_RETRY = 0.5                 # while waiting: re-check who the coordinator is this often
+MUTEX_HOLD_LIMIT = 10.0           # a holder that hasn't released after this is presumed crashed
+
+# the shared resource: the campus overflow garage, written by every lot server
+OVERFLOW_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared", "overflow.json")
+OVERFLOW_SPACES = 5               # O-01 .. O-05
+OVERFLOW_WORK_TIME = 0.3          # time between reading and writing the table (a slow shared database)
 
 # topics and groups
 def sensor_topic(lot):

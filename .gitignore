@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 .netlify/
 .DS_Store
+prototype/shared/

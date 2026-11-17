@@ -27,6 +27,11 @@ server answers them from its P2P middleware (Milestone 3).
 
     python client.py --lot B leader              # who lot B believes the leader (coordinator) is
     python client.py --lot A elect               # make lot A start a Bully election now
+    python client.py --id alice overflow         # ask lot A for a space in the shared overflow garage
+    python client.py --id alice overflow release # give it back
+    python client.py overflow status             # the shared table (a read, no lock)
+    python client.py overflow reset              # empty the table (inside the lock)
+    python client.py --id bob overflow --no-lock # skip the distributed lock (demo of the conflict)
 
 Every console line shows our Lamport time as L= (Milestone 4).
 """
@@ -39,7 +44,7 @@ import time
 from comm import envelope, pubsub, request_reply
 from comm.clock import clock_for
 from comm.request_reply import ServiceUnavailable
-from common import (BROKER_PORT, CLIENT_RETRIES, CLIENT_TIMEOUT, LOT_PORTS, MessageLog, now,
+from common import (BROKER_PORT, CLIENT_RETRIES, CLIENT_TIMEOUT, LOT_PORTS, MUTEX_WAIT, MessageLog, now,
                     status_topic, ts_str)
 
 
@@ -57,6 +62,12 @@ def do_request(args, host, port, log):
         req_args = {"lot": args.space or "B", "ttl": args.ttl, "no_cache": args.no_cache, "fresh": args.fresh}
     if args.op == "total":
         req_args = {"ttl": args.ttl}
+    timeout, retries = CLIENT_TIMEOUT, CLIENT_RETRIES
+    if args.op == "overflow":
+        req_args = {"client": args.id, "action": args.space or "assign", "no_lock": args.no_lock}
+        # the server may wait up to MUTEX_WAIT for the lock: wait for it, and don't retry,
+        # or the retry would run the operation a second time while the first still waits
+        timeout, retries = MUTEX_WAIT + 5, 1
 
     msg_id = envelope.new_id()
     # the client is single-threaded, so the REQUEST built next is stamped with the next tick
@@ -64,7 +75,7 @@ def do_request(args, host, port, log):
         % (args.op, args.space or "", msg_id, clock_for(sender).now() + 1, host, port))
     try:
         reply_msg = request_reply.call(host, port, args.op, req_args, sender, log,
-                                       timeout=CLIENT_TIMEOUT, retries=CLIENT_RETRIES,
+                                       timeout=timeout, retries=retries,
                                        msg_id=msg_id, drop_first_reply=args.simulate_lost_reply, full=True)
     except ServiceUnavailable as e:
         say(args.id, "FAILED: %s" % e)
@@ -125,7 +136,24 @@ def do_request(args, host, port, log):
         print("   members (Bully priority, highest wins): %s" % " < ".join(r["members"]))
         print("   counters: elections started %d, won %d, COORDINATOR received %d, leader failures seen %d"
               % (st["elections"], st["won"], st["coordinator_recv"], st["leader_failures"]))
+        m = r.get("mutex")
+        if m:
+            if m["coordinating"]:
+                print("   lock coordinator: holders %s, queues %s" % (m["holders"] or "{}", m["queues"] or "{}"))
+            print("   this lot holds %s, waits for %s" % (m["holding"] or "nothing", m["waiting"] or "nothing"))
         return
+    if args.op == "overflow":
+        if r["action"] == "status":
+            say(args.id, "<- OK overflow garage, version %d: %d of %d free" % (r["version"], len(r["free"]), r["capacity"]))
+            for sid, who in r["taken"].items():
+                print("   %s  %s" % (sid, who))
+            print("   free: %s" % (", ".join(r["free"]) or "(none)"))
+            return
+        lock = "inside the lock" if r["locked"] else "WITHOUT the lock"
+        say(args.id, "<- %s %s %s: %s (via lot %s, %s, waited %.2fs, table version %d)"
+            % ("OK" if r["granted"] else "DENIED", r["action"], r["space"] or "", r["reason"], r["lot"], lock,
+               r["waited"], r["version"]))
+        sys.exit(0 if r["granted"] else 1)
     if args.op == "elect":
         say(args.id, "<- OK lot %s %s" % (r["id"], "started an election" if r["started"] else "is already running an election"))
         return
@@ -168,8 +196,10 @@ def main():
     ap.add_argument("--ttl", type=int, default=3, help="flood depth for lookup / total")
     ap.add_argument("--no-cache", action="store_true", help="lookup: skip the local replica so the flood is visible")
     ap.add_argument("--fresh", action="store_true", help="lookup: only the lot that owns the key may answer, not a replica")
+    ap.add_argument("--no-lock", action="store_true",
+                    help="overflow: skip the distributed lock (only to show the conflict it prevents)")
     ap.add_argument("op", choices=["find", "reserve", "release", "watch", "lookup", "peers", "total",
-                                   "leader", "elect"])
+                                   "leader", "elect", "overflow"])
     ap.add_argument("space", nargs="?", help="space id (reserve/release) or lot id (watch/lookup)")
     args = ap.parse_args()
 
