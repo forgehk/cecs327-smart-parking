@@ -50,13 +50,16 @@ class ServiceUnavailable(Exception):
 # ---------------------------------------------------------------- client side
 
 def call(host, port, op, args, sender, log, timeout=DEFAULT_TIMEOUT,
-         retries=DEFAULT_RETRIES, msg_id=None, drop_first_reply=False):
-    """Send one request, return the REPLY payload. Retries with the same msg_id."""
+         retries=DEFAULT_RETRIES, msg_id=None, drop_first_reply=False, full=False):
+    """Send one request, return the REPLY payload (or the whole REPLY envelope if
+    full=True, e.g. to show its lamport stamp). Retries with the same msg_id."""
     peer = "%s:%d" % (host, port)
     request = envelope.make("REQUEST", sender, {"op": op, "args": args}, msg_id=msg_id)
     last_error = None
 
     for attempt in range(1, retries + 1):
+        if attempt > 1:
+            envelope.stamp(request)          # same msg_id, but a new send event
         try:
             with framing.connect(host, port, timeout) as s:
                 log.record("send", peer, request)
@@ -70,7 +73,7 @@ def call(host, port, op, args, sender, log, timeout=DEFAULT_TIMEOUT,
                 if reply.get("type") != "REPLY" or reply.get("reply_to") != request["msg_id"]:
                     last_error = "reply did not match request"
                     continue
-                return reply["payload"]
+                return reply if full else reply["payload"]
         except socket.timeout:
             last_error = "timeout after %.1fs" % timeout
         except (ConnectionRefusedError, ConnectionClosed, OSError) as e:
@@ -119,7 +122,7 @@ class Service:
         if cached is not None:
             reply = dict(cached)
             reply["payload"] = dict(cached["payload"], duplicate=True)
-            return reply
+            return envelope.stamp(reply)
 
         op = request["payload"].get("op")
         args = request["payload"].get("args", {})

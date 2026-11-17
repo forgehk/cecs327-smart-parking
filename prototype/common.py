@@ -11,6 +11,8 @@ import os
 import threading
 import time
 
+from comm.clock import clock_for
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
 # timing (seconds) - small values so a demo doesn't take forever
@@ -62,17 +64,31 @@ def ts_str(t):
 
 
 class MessageLog:
-    """Append-only log file for one process."""
+    """Append-only log file for one process.
+
+    Each line also carries the process's Lamport time for that event (Milestone 4):
+    a send logs the stamp the message went out with, a receive applies the
+    receive rule here (every receive is logged before it is handled, see
+    comm/clock.py) and logs the result, an info line logs the current value."""
 
     def __init__(self, process_name):
         os.makedirs(LOG_DIR, exist_ok=True)
         self.process = process_name
         self.path = os.path.join(LOG_DIR, process_name + ".log")
+        self.clock = clock_for(process_name)
         self._lock = threading.Lock()
+
+    def _lamport(self, direction, msg):
+        if direction == "recv" and isinstance(msg, dict):
+            return self.clock.receive(msg.get("lamport"))
+        if direction == "send" and isinstance(msg, dict) and "lamport" in msg:
+            return msg["lamport"]
+        return self.clock.now()
 
     def record(self, direction, peer, msg):
         entry = {
             "ts": round(now(), 3),
+            "lamport": self._lamport(direction, msg),
             "process": self.process,
             "dir": direction,      # "send", "recv", "dropped" or "info"
             "peer": peer,

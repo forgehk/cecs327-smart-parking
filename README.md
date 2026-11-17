@@ -92,6 +92,28 @@ The browser demo in `web/` is the Milestone 1 version of the system (direct
 connections, no broker or registry). It is still useful for showing the lot state and
 the failure cases visually; the Milestone 2 and 3 pages on the site are diagrams.
 
+## Coordination (Milestone 4)
+
+### Logical clocks
+
+Every process keeps a Lamport clock (`prototype/comm/clock.py`). Sending is an event:
+`C = C + 1` and the message goes out with `"lamport": C` in its envelope. Receiving
+merges: `C = max(C, lamport in message) + 1`. So a reply always has a later time than
+its request, and an EVENT a later time than the PUBLISH that caused it, even when
+wall clocks disagree.
+
+- the send rule runs in `envelope.make()` (and `envelope.stamp()` for a retry), so
+  every message in the system carries a Lamport time
+- the receive rule runs in `MessageLog.record("recv", ...)`: every receive is logged
+  right after `recv_msg()` and before it is handled
+- every log line has the process's Lamport time for that event, and the lot server
+  and client consoles print it as `L=` next to the wall clock
+- a lot server that crashes continues its clock from the last time in its own log
+
+`python event_order.py` merges every log into one timeline sorted by
+`(lamport, process)`; `python event_order.py --check` verifies that every receive comes
+after its send and every reply after its request.
+
 ## Requirements
 
 - Python 3.9 or newer (standard library only, nothing to `pip install`)
@@ -163,6 +185,9 @@ python3 client.py --lot D lookup B --no-cache --fresh   # D floods the overlay, 
 python3 client.py --lot C peers                  # C's neighbors, replicas, counters
 python3 client.py total                          # free spaces over every lot, by convergecast
 python3 p2p_metrics.py                           # degree, edges, diameter, lookup hops, traffic
+python3 event_order.py --no-info --last 30       # the last 30 messages of all processes, in Lamport order
+python3 event_order.py --types REQUEST,REPLY --grep A-03   # one space's requests and replies, in order
+python3 event_order.py --check                   # every receive after its send, every reply after its request
 ```
 
 ## Running the demo
@@ -202,6 +227,7 @@ cd prototype
 python3 tests/test_framing.py     # framing + envelope, no network, < 1 s
 python3 tests/test_comm.py        # the three patterns in-process over real sockets, ~5 s
 python3 tests/test_p2p.py         # the overlay: five peers in-process over real sockets, ~15 s
+python3 tests/test_clock.py       # Lamport clocks: the rules, stamps, causal chains over real sockets, ~2 s
 python3 tests/run_tests.py        # whole system, eight scenarios, about 2 minutes
 python3 tests/run_tests.py 5 8    # just the overlay scenarios
 ```
@@ -221,6 +247,11 @@ cache hit on the second try, owner-only reads, duplicates dropped, not found, TT
 stops at the neighbors), convergecast (every lot counted once, N-1 replies), graceful
 leave, crash detected by ping, repair counter, a new peer receiving the table, random
 sampling refilling short lists, old replicas kept and aging.
+
+`test_clock.py`: the two update rules (tick, `max + 1`), concurrent sends get unique
+stamps, restore after a crash never goes back, every envelope stamped per process, a
+retry and a cached reply re-stamped, X -> Y -> Z causal chain where a far-ahead clock
+pulls the others forward, and `event_order.py --check` on the resulting logs.
 
 `run_tests.py` scenarios:
 
@@ -262,12 +293,14 @@ prototype/
   comm/
     framing.py              length-prefixed JSON over TCP
     envelope.py             the common message fields
+    clock.py                Lamport clocks (one per process)
     request_reply.py        call() and Service
     pubsub.py               Broker, Subscriber, Publisher
     group.py                Registry, join/leave/members, group_send
   p2p/
     overlay.py              Peer: neighbors, join/leave, ping repair, gossip, lookup, convergecast
   p2p_metrics.py            graph metrics from a live overlay
+  event_order.py            all logs merged in Lamport order, clock-condition check
   registry.py               the registry process
   broker.py                 the broker process
   lot_server.py
@@ -278,6 +311,7 @@ prototype/
     test_framing.py         unit tests, no network
     test_comm.py            the three patterns over real sockets
     test_p2p.py             the overlay over real sockets
+    test_clock.py           Lamport clocks over real sockets
     run_tests.py            whole-system scenarios
 web/                        Milestone 1 browser demo
   index.html, style.css

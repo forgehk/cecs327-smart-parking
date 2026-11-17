@@ -7,8 +7,13 @@ All messages share the envelope from `comm/envelope.py`:
 | `msg_id` | unique id (8 hex chars); a REPLY/ACK echoes it in `reply_to` |
 | `sender` | process name, for the logs |
 | `timestamp` | ISO 8601 with milliseconds, sender's clock |
+| `lamport` | sender's Lamport clock when it sent the message (Milestone 4, `comm/clock.py`); optional, older logs don't have it |
 | `reply_to` | `msg_id` of the message this answers, else `null` |
 | `payload` | type-specific data |
+
+Since Milestone 4 every log entry also has a `lamport` field: the process's Lamport time for that event
+(the message's stamp for a send, `max(local, stamp) + 1` for a receive). `python event_order.py` merges all
+logs into one timeline in that order; `python event_order.py --check` verifies every receive comes after its send.
 
 The examples below are real lines from `docs/sample_logs_m2/` (one log entry = `ts`, `process`, `dir`, `peer`, `msg`).
 

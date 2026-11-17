@@ -118,7 +118,8 @@ class LotServer:
         self.publisher = pubsub.Publisher(broker[0], broker[1], self.name, self.log)
 
     def info(self, text):
-        print("[%s] [%s] %s" % (ts_str(now()), self.name, text), flush=True)
+        """Console line with wall time and our Lamport time (L) right now."""
+        print("[%s L=%d] [%s] %s" % (ts_str(now()), self.log.clock.now(), self.name, text), flush=True)
 
     # ---- crash recovery ----
 
@@ -136,9 +137,12 @@ class LotServer:
 
     def replay_log(self):
         """Go through our own log and redo everything that changed state:
-        sensor EVENTs we received and reservations/releases we granted."""
+        sensor EVENTs we received and reservations/releases we granted.
+        Also brings the Lamport clock back to the last time we logged."""
         n = 0
+        last_lamport = 0
         for entry in self.log.replay():
+            last_lamport = max(last_lamport, entry.get("lamport", 0) or 0)
             msg = entry.get("msg", {})
             t = entry.get("ts", 0)
             p = msg.get("payload", {}) if isinstance(msg, dict) else {}
@@ -156,6 +160,9 @@ class LotServer:
                     sp.reserved_by = None
                     sp.lease_end = 0.0
                     n += 1
+        if last_lamport:
+            self.log.clock.restore(last_lamport)
+            self.info("RECOVERY: Lamport clock continues from %d" % last_lamport)
         if n:
             self.info("RECOVERY: replayed %d entries from %s" % (n, self.log.path))
             self.info("RECOVERY: " + self.summary_text())

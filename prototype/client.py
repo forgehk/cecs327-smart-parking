@@ -32,13 +32,15 @@ import sys
 import time
 
 from comm import envelope, pubsub, request_reply
+from comm.clock import clock_for
 from comm.request_reply import ServiceUnavailable
 from common import (BROKER_PORT, CLIENT_RETRIES, CLIENT_TIMEOUT, LOT_PORTS, MessageLog, now,
                     status_topic, ts_str)
 
 
 def say(client, text):
-    print("[%s] [client %s] %s" % (ts_str(now()), client, text), flush=True)
+    """Console line with wall time and our Lamport time (L) right now."""
+    print("[%s L=%d] [client %s] %s" % (ts_str(now()), clock_for("client_" + client).now(), client, text), flush=True)
 
 
 def do_request(args, host, port, log):
@@ -52,17 +54,23 @@ def do_request(args, host, port, log):
         req_args = {"ttl": args.ttl}
 
     msg_id = envelope.new_id()
-    say(args.id, "-> %s %s (msg_id %s) to %s:%d" % (args.op, args.space or "", msg_id, host, port))
+    # the client is single-threaded, so the REQUEST built next is stamped with the next tick
+    say(args.id, "-> %s %s (msg_id %s, lamport %d) to %s:%d"
+        % (args.op, args.space or "", msg_id, clock_for(sender).now() + 1, host, port))
     try:
-        reply = request_reply.call(host, port, args.op, req_args, sender, log,
-                                   timeout=CLIENT_TIMEOUT, retries=CLIENT_RETRIES,
-                                   msg_id=msg_id, drop_first_reply=args.simulate_lost_reply)
+        reply_msg = request_reply.call(host, port, args.op, req_args, sender, log,
+                                       timeout=CLIENT_TIMEOUT, retries=CLIENT_RETRIES,
+                                       msg_id=msg_id, drop_first_reply=args.simulate_lost_reply, full=True)
     except ServiceUnavailable as e:
         say(args.id, "FAILED: %s" % e)
         sys.exit(2)
+    reply = reply_msg["payload"]
 
     if args.json:
         print(json.dumps(reply, indent=2))
+        # stdout stays pure JSON for scripts; the clock note goes to the terminal only
+        print("   (REPLY stamped lamport %s by %s; our clock after receiving it: %d)"
+              % (reply_msg.get("lamport"), reply_msg["sender"], clock_for(sender).now()), file=sys.stderr)
         return
 
     dup = " (duplicate - cached reply)" if reply.get("duplicate") else ""
