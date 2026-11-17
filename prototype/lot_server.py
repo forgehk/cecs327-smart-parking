@@ -23,6 +23,9 @@ How it talks to everyone else:
                                       flood a TTL-bounded lookup for anything not cached.
     us           -> registry          only as a directory to find a bootstrap peer when
                                       --bootstrap is not given (the Milestone 2 group).
+    us          <-> every lot server  Bully election (Milestone 4, coord/election.py): the
+                                      highest live lot is the leader (coordinator); followers
+                                      ping it and elect a new one when it stops answering.
 
 Software stack on each lot server:
 
@@ -47,6 +50,7 @@ from comm.request_reply import BadRequest
 from common import (BROKER_PORT, LOT_PORTS, LOT_SERVER_GROUP, P2P_GOSSIP_INTERVAL, P2P_LOOKUP_TTL,
                     REGISTRY_PORT, RESERVATION_LEASE, STALENESS_DELTA,
                     MessageLog, now, sensor_topic, status_topic, ts_str)
+from coord.election import Election
 from p2p.overlay import Peer
 
 
@@ -113,6 +117,14 @@ class LotServer:
 
         # the P2P middleware shares our port: its message types are dispatched by the Service
         self.peer = Peer(lot, self.address, self.service, self.log, info=self.info)
+
+        # Bully election (Milestone 4) also shares the port. Every lot in LOT_PORTS may
+        # exist; the ones that are down just don't answer.
+        members = {l: "127.0.0.1:%d" % p for l, p in LOT_PORTS.items()}
+        members[lot] = self.address
+        self.election = Election(lot, self.address, members, self.service, self.log, info=self.info)
+        self.service.register("leader", self.op_leader)
+        self.service.register("elect", self.op_elect)
 
         self.subscriber = pubsub.Subscriber(broker[0], broker[1], self.name, self.log, self.on_sensor_event)
         self.publisher = pubsub.Publisher(broker[0], broker[1], self.name, self.log)
@@ -284,6 +296,19 @@ class LotServer:
         self.info("TOTAL across %s: %d free of %d (%d messages up the tree)" % (r["lots"], r["free"], r["total"], r["messages"]))
         return r
 
+    # ---- leader election (Milestone 4) ----
+
+    def op_leader(self, args, req):
+        """Who we believe the leader (coordinator) is, and our election counters."""
+        s = self.election.status()
+        s["op"] = "leader"
+        return s
+
+    def op_elect(self, args, req):
+        """Start an election now (for the demo); the reply comes back right away."""
+        started = self.election.trigger("requested by %s" % args.get("client", "a client"))
+        return {"op": "elect", "id": self.lot, "started": started}
+
     def find_bootstrap(self):
         """--bootstrap wins. Otherwise ask the registry (the Milestone 2 group) who is
         already running and pick the first one that is not us. First node: nobody."""
@@ -400,12 +425,14 @@ class LotServer:
         self.join_overlay()
         threading.Thread(target=self.gossip_loop, daemon=True).start()
         threading.Thread(target=self.monitor_loop, daemon=True).start()
+        self.election.start()
         try:
             self.service.serve_forever()
         except KeyboardInterrupt:
             pass
         finally:
             self.stopping = True
+            self.election.stop()
             self.info("shutting down")
             self.peer.leave()
             self.peer.stop()

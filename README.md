@@ -114,6 +114,26 @@ wall clocks disagree.
 `(lamport, process)`; `python event_order.py --check` verifies that every receive comes
 after its send and every reply after its request.
 
+### Leader election (Bully)
+
+The lot servers elect one leader, the coordinator (`prototype/coord/election.py`).
+Every lot in `LOT_PORTS` may exist and the highest live one wins: E > D > C > B > A.
+
+- `ELECTION` goes to every higher lot. A live one answers OK and runs its own election.
+  If nobody higher answers within 1 s, the sender wins.
+- The winner sends `COORDINATOR` to everyone. A lower lot claiming to be the leader is
+  answered with a new election.
+- Every follower sends `LEADER_PING` to the leader every 2 s. No answer within 1 s means
+  the leader failed, and the follower starts an election. A dead leader is replaced in
+  about 3 s.
+- A lot server starts an election when it starts, so a restarted lot with the highest
+  id takes the leadership back ("bully").
+
+```
+python3 client.py --lot B leader     # who B believes the leader is, and its election counters
+python3 client.py --lot A elect      # make A start an election now
+```
+
 ## Requirements
 
 - Python 3.9 or newer (standard library only, nothing to `pip install`)
@@ -228,7 +248,8 @@ python3 tests/test_framing.py     # framing + envelope, no network, < 1 s
 python3 tests/test_comm.py        # the three patterns in-process over real sockets, ~5 s
 python3 tests/test_p2p.py         # the overlay: five peers in-process over real sockets, ~15 s
 python3 tests/test_clock.py       # Lamport clocks: the rules, stamps, causal chains over real sockets, ~2 s
-python3 tests/run_tests.py        # whole system, eight scenarios, about 2 minutes
+python3 tests/test_election.py    # Bully election: four nodes over real sockets, crashes and restarts, ~15 s
+python3 tests/run_tests.py        # whole system, nine scenarios, about 3 minutes
 python3 tests/run_tests.py 5 8    # just the overlay scenarios
 ```
 
@@ -253,6 +274,11 @@ stamps, restore after a crash never goes back, every envelope stamped per proces
 retry and a cached reply re-stamped, X -> Y -> Z causal chain where a far-ahead clock
 pulls the others forward, and `event_order.py --check` on the resulting logs.
 
+`test_election.py`: four nodes start and agree on D; ELECTION only goes upward and D
+never sends one; D crashes and a failed LEADER_PING leads to C; D restarts and bullies
+back (C steps down); D and C crash together and B wins; A alone elects itself; four
+simultaneous elections still end with one leader; the clock condition holds on all of it.
+
 `run_tests.py` scenarios:
 
 | # | Scenario | Checks |
@@ -265,6 +291,7 @@ pulls the others forward, and `event_order.py --check` on the resulting logs.
 | 6 | broker crash | kill the broker: sensors can't publish, Lot A goes all `unknown`, but request-reply still works; restart the broker: lot server re-SUBSCRIBEs, sensor republishes, lot recovers |
 | 7 | status watch | a `client.py watch A` process receives the reserved/free EVENTs the lot server publishes; broker log has one send line per delivery |
 | 8 | join / leave trace | four lots up with 2 to 3 neighbors each and three replicas each; D's owner-only lookup for B takes 2 hops; `total` from A covers all four; E joins through C, receives the table, has 2 neighbors; C leaves gracefully and every neighbor drops it at once; D crashes and is removed by ping; A, B, E are still one connected mesh; `total` now covers exactly A, B, E |
+| 9 | leader election | A, B, C agree on C; `kill -9` C: A and B notice the failed LEADER_PING and agree on B within a few seconds; restart C: it takes the leadership back and B logs `LEADER B -> C`; a forced election from A still ends with C; `event_order.py --check` holds |
 
 Process output from the run is in `tests/out/`. Logs and output from our runs are in
 `docs/sample_logs/` (M1), `docs/sample_logs_m2/` (M2) and `docs/sample_logs_m3/` (M3).
@@ -299,6 +326,9 @@ prototype/
     group.py                Registry, join/leave/members, group_send
   p2p/
     overlay.py              Peer: neighbors, join/leave, ping repair, gossip, lookup, convergecast
+  coord/
+    wire.py                 one message to one node (or many in parallel), ACK on the same connection
+    election.py             Bully leader election and leader failure detection
   p2p_metrics.py            graph metrics from a live overlay
   event_order.py            all logs merged in Lamport order, clock-condition check
   registry.py               the registry process
@@ -312,6 +342,7 @@ prototype/
     test_comm.py            the three patterns over real sockets
     test_p2p.py             the overlay over real sockets
     test_clock.py           Lamport clocks over real sockets
+    test_election.py        Bully election over real sockets
     run_tests.py            whole-system scenarios
 web/                        Milestone 1 browser demo
   index.html, style.css

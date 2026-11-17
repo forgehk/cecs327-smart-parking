@@ -24,6 +24,11 @@ every EVENT the lot server publishes.
 
 lookup / peers / total are ordinary request-reply calls to one lot server; that
 server answers them from its P2P middleware (Milestone 3).
+
+    python client.py --lot B leader              # who lot B believes the leader (coordinator) is
+    python client.py --lot A elect               # make lot A start a Bully election now
+
+Every console line shows our Lamport time as L= (Milestone 4).
 """
 
 import argparse
@@ -113,6 +118,17 @@ def do_request(args, host, port, log):
     if args.op == "total":
         say(args.id, "<- OK %d free of %d across lots %s (%d message(s) up the tree)" % (r["free"], r["total"], ",".join(r["lots"]), r["messages"]))
         return
+    if args.op == "leader":
+        st = r["stats"]
+        state = "election running" if r["electing"] else "leader %s at %s" % (r["leader"], r["leader_address"]) if r["leader"] else "no leader known"
+        say(args.id, "<- OK lot %s sees: %s%s" % (r["id"], state, " (that's me)" if r["leader"] == r["id"] else ""))
+        print("   members (Bully priority, highest wins): %s" % " < ".join(r["members"]))
+        print("   counters: elections started %d, won %d, COORDINATOR received %d, leader failures seen %d"
+              % (st["elections"], st["won"], st["coordinator_recv"], st["leader_failures"]))
+        return
+    if args.op == "elect":
+        say(args.id, "<- OK lot %s %s" % (r["id"], "started an election" if r["started"] else "is already running an election"))
+        return
     verdict = "OK" if r["granted"] else "DENIED"
     extra = " (lease %.0fs)" % r["lease"] if r.get("lease") else ""
     say(args.id, "<- %s %s%s%s" % (verdict, r.get("reason", ""), extra, dup))
@@ -152,7 +168,8 @@ def main():
     ap.add_argument("--ttl", type=int, default=3, help="flood depth for lookup / total")
     ap.add_argument("--no-cache", action="store_true", help="lookup: skip the local replica so the flood is visible")
     ap.add_argument("--fresh", action="store_true", help="lookup: only the lot that owns the key may answer, not a replica")
-    ap.add_argument("op", choices=["find", "reserve", "release", "watch", "lookup", "peers", "total"])
+    ap.add_argument("op", choices=["find", "reserve", "release", "watch", "lookup", "peers", "total",
+                                   "leader", "elect"])
     ap.add_argument("space", nargs="?", help="space id (reserve/release) or lot id (watch/lookup)")
     args = ap.parse_args()
 

@@ -353,7 +353,56 @@ def scenario_8():
     kill_all()
 
 
-SCEN = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4, 5: scenario_5, 6: scenario_6, 7: scenario_7, 8: scenario_8}
+def leader_views(lots):
+    """lot -> who that lot server believes is the leader (None if it didn't answer)."""
+    out = {}
+    for lot in lots:
+        r = result(client("--lot", lot, "leader", timeout=15))
+        out[lot] = r["leader"] if r else None
+    return out
+
+
+def wait_leader(lots, expected, timeout=15):
+    t0 = time.time()
+    while time.time() - t0 < timeout:
+        v = leader_views(lots)
+        if all(x == expected for x in v.values()):
+            return time.time() - t0, v
+        time.sleep(0.5)
+    return None, leader_views(lots)
+
+
+def scenario_9():
+    print("\n[9] Leader election (Bully): the leader crashes, the next highest takes over, the old leader bullies back (Milestone 4)")
+    fresh_logs()
+    start_infra()
+    for lot in "ABC":
+        start_lot(lot)
+    took, v = wait_leader("ABC", "C")
+    check(took is not None, "A, B, C all agree the highest lot C is the leader: %s" % v)
+
+    kill9("C")                                 # the leader crashes
+    print("  ... leader C crashed (kill -9)")
+    took, v = wait_leader("AB", "B")
+    check(took is not None, "A and B detect it by LEADER_PING and elect B within %.1fs: %s" % (took or -1, v))
+    check("did not answer the ping" in console("A") + console("B"), "a follower's console shows the failed ping to C")
+    check("COORDINATOR -> " in console("B"), "B's console shows it announcing COORDINATOR")
+
+    start_lot("C")                             # the old leader comes back
+    took, v = wait_leader("ABC", "C")
+    check(took is not None, "C restarts, starts an election, and takes the leadership back: %s" % v)
+    check("LEADER B -> C" in console("B"), "B's console shows it handing over to C")
+
+    reply = client("--lot", "A", "elect")
+    took, v = wait_leader("ABC", "C")
+    check(result(reply) and took is not None, "a forced election from the lowest lot still ends with C: %s" % v)
+    order = subprocess.run([PY, os.path.join(PROTO, "event_order.py"), "--check"], cwd=PROTO, capture_output=True, text=True)
+    check(order.returncode == 0, "every election message is received after it was sent (event_order.py --check)")
+    kill_all()
+
+
+SCEN = {1: scenario_1, 2: scenario_2, 3: scenario_3, 4: scenario_4, 5: scenario_5, 6: scenario_6, 7: scenario_7, 8: scenario_8,
+        9: scenario_9}
 
 if __name__ == "__main__":
     which = [int(x) for x in sys.argv[1:]] or sorted(SCEN)

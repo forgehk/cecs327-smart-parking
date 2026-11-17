@@ -45,6 +45,12 @@ P2P_LOOKUP_TTL = 3           # flood depth for a pull lookup
 P2P_LOOKUP_TIMEOUT = 2.0     # how long the asker waits for a FOUND
 P2P_REPLICA_STALE = 4 * P2P_GOSSIP_INTERVAL   # a cached remote summary older than this is flagged stale
 
+# coordination (Milestone 4)
+ELECTION_ANSWER_TIMEOUT = 1.0     # how long to wait for a higher node to answer ELECTION
+COORDINATOR_TIMEOUT = 3.0         # after a higher node answered: wait this long for its COORDINATOR
+LEADER_CHECK_INTERVAL = 2.0       # how often a follower pings the leader
+LEADER_PING_TIMEOUT = 1.0         # no answer within this -> the leader is considered dead
+
 # topics and groups
 def sensor_topic(lot):
     return "lot/%s/sensor" % lot

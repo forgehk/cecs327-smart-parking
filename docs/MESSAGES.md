@@ -339,6 +339,73 @@ Convergecast: A is the root; B already heard this qid from someone else, so it a
 
 A real (non-dup) AGG_REPLY carries `{"qid", "child", "lots": ["C", "D"], "free": 26, "total": 40, "messages": 1}`.
 
+## Leader election (Milestone 4, lot server <-> lot server)
+
+Bully algorithm (`coord/election.py`). One connection per message, answered by an ACK on
+the same connection (`coord/wire.py`). Priority is the lot letter: E > D > C > B > A.
+
+| type | sent to | payload | ACK payload |
+|---|---|---|---|
+| `ELECTION` | every node with a higher id | `id`, `address`, `reason` | `{"status": "OK", "alive": true, "id"}`: "I'm alive and I take over" |
+| `COORDINATOR` | every other node, by the winner | `id`, `address` | `{"status": "OK", "id"}` |
+| `LEADER_PING` | the leader, by each follower every 2 s | `id` | `{"status": "OK", "id", "leader"}`; no ACK within 1 s = leader failed |
+
+### ELECTION  (from `lot_server_A.log`, dir=send, after leader C crashed)
+
+```json
+{
+  "type": "ELECTION",
+  "msg_id": "d441451d",
+  "sender": "lot_server_A",
+  "timestamp": "2026-11-17T01:29:10.987",
+  "lamport": 62,
+  "reply_to": null,
+  "payload": {"id": "A", "address": "127.0.0.1:5001", "reason": "leader C failed"}
+}
+```
+
+### ACK to ELECTION  (from `lot_server_A.log`, dir=recv): B is alive and takes over
+
+```json
+{
+  "type": "ACK",
+  "msg_id": "da1d3031",
+  "sender": "lot_server_B",
+  "timestamp": "2026-11-17T01:29:10.994",
+  "lamport": 64,
+  "reply_to": "d441451d",
+  "payload": {"status": "OK", "alive": true, "id": "B"}
+}
+```
+
+### COORDINATOR  (from `lot_server_A.log`, dir=send)
+
+```json
+{
+  "type": "COORDINATOR",
+  "msg_id": "44cae3a7",
+  "sender": "lot_server_A",
+  "timestamp": "2026-11-17T01:29:06.992",
+  "lamport": 18,
+  "reply_to": null,
+  "payload": {"id": "A", "address": "127.0.0.1:5001"}
+}
+```
+
+### LEADER_PING  (from `lot_server_A.log`, dir=send)
+
+```json
+{
+  "type": "LEADER_PING",
+  "msg_id": "a36193bb",
+  "sender": "lot_server_A",
+  "timestamp": "2026-11-17T01:29:12.987",
+  "lamport": 100,
+  "reply_to": null,
+  "payload": {"id": "A"}
+}
+```
+
 ## Payloads
 
 | type | payload | answered by |
@@ -377,8 +444,10 @@ protocol problems (unknown operation, bad arguments, handler crash).
 ## Log line format
 
 ```json
-{"ts": 1791778886.1, "process": "lot_server_A", "dir": "send", "peer": "127.0.0.1:5002", "msg": { ...envelope... }}
+{"ts": 1791778886.1, "lamport": 42, "process": "lot_server_A", "dir": "send", "peer": "127.0.0.1:5002", "msg": { ...envelope... }}
 ```
+
+`lamport` (since Milestone 4) is the process's Lamport time for this event.
 
 `dir` is `send`, `recv`, `dropped` (sensor omission) or `info` (a note: retry, timeout,
 unreachable peer, bad frame).

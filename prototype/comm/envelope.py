@@ -35,6 +35,8 @@ TYPES = {
     "P2P_GOSSIP",                                          # push: rumor with a versioned value, no reply
     "P2P_LOOKUP", "P2P_FOUND",                             # pull: TTL flood and the answer sent back to the asker
     "P2P_AGG", "P2P_AGG_REPLY",                            # convergecast over a spanning tree
+    # coordination (Milestone 4)
+    "ELECTION", "COORDINATOR", "LEADER_PING",              # Bully election, each answered by ACK
 }
 
 
