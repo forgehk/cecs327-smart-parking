@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Distributed Smart Parking, CECS 327</title>
-  <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication) and Milestone 3 peer-to-peer overlay (join, leave, gossip, flood lookup, replicas).">
+  <meta name="description" content="Distributed Smart Parking, CECS 327: Milestone 1 live demo (sensor nodes, lot servers, client as separate processes) Milestone 2 communication layer (TCP sockets, JSON envelope, request-reply, pub-sub, group communication) Milestone 3 peer-to-peer overlay (join, leave, gossip, flood lookup, replicas) and Milestone 4 coordination (Lamport clocks, Bully leader election, mutual exclusion on a shared overflow garage).">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet">
@@ -19,6 +19,7 @@
     <a href="#milestone-1">Milestone 1</a>
     <a href="#milestone-2">Milestone 2</a>
     <a href="#milestone-3">Milestone 3</a>
+    <a href="#milestone-4">Milestone 4</a>
   </nav>
   <div class="top-actions">
     <button class="sm" id="btnReset" title="Restart every process, clear reservations and the log (R)">Reset demo</button>
@@ -32,7 +33,7 @@
     <h1>Distributed Smart Parking</h1>
     <p class="lede">
       Parking sensors, lot servers and a driver app, each a separate process that only communicates by messages.
-      Each lot server owns one lot. There is no central coordinator. Processes can be killed, links cut and replies lost; the rest keeps working.
+      Each lot server owns one lot. No process is a fixed boss: the lots elect a leader and replace it when it fails. Processes can be killed, links cut and replies lost; the rest keeps working.
     </p>
     <p class="team"><b>Team:</b> Degoma, Gonzalez-Morales, Karakra, Lee, Lopez, Nguyen, Ocegueda</p>
 
@@ -204,7 +205,8 @@
           <tr><td><code>type</code></td><td>which kind of message; the receiver dispatches on it</td></tr>
           <tr><td><code>msg_id</code></td><td>unique id; a REPLY or ACK carries the id it answers in <code>reply_to</code></td></tr>
           <tr><td><code>sender</code></td><td>process name, for the logs</td></tr>
-          <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's clock, used as ordering evidence</td></tr>
+          <tr><td><code>timestamp</code></td><td>ISO 8601 with milliseconds, sender's wall clock, for reading the logs</td></tr>
+          <tr><td><code>lamport</code></td><td>the sender's Lamport clock, added in Milestone 4; this is what orders events between processes</td></tr>
           <tr><td><code>payload</code></td><td>type-specific data</td></tr>
         </table>
         <div class="card-foot">A bad length header, truncated body or non-JSON bytes raise <code>ProtocolError</code> and the connection is closed. A socket closed mid-read raises <code>ConnectionClosed</code>. Max message size 1 MB.</div>
@@ -237,9 +239,10 @@
         <tr><td>transport</td><td>postMessage via the page, which acts as the network</td><td>TCP sockets, 4-byte length prefix + JSON</td></tr>
         <tr><td>patterns</td><td>request-reply, peer summaries</td><td>request-reply, publish-subscribe via broker, group via registry</td></tr>
         <tr><td>overlay</td><td>simulated in the Milestone 3 section with the same rules</td><td>real mesh over TCP in <code>prototype/p2p</code>, up to five lots</td></tr>
+        <tr><td>coordination</td><td>simulated in the Milestone 4 section with the same rules</td><td>Lamport clocks on every message, Bully election and a leader-run lock in <code>prototype/coord</code></td></tr>
         <tr><td>faults</td><td>kill / restart, cut links, latency, drop, lost reply</td><td>kill any process, lost reply, broker crash, dead group member</td></tr>
         <tr><td>logs</td><td>per-worker in memory, download as .jsonl</td><td>per-process <code>logs/*.log</code>, JSON lines, replayed on restart</td></tr>
-        <tr><td>tests</td><td>five scripted scenarios</td><td>10 framing checks, 21 pattern checks, 27 overlay checks, 8 end-to-end scenarios</td></tr>
+        <tr><td>tests</td><td>five scripted scenarios</td><td>10 framing checks, 21 pattern checks, 27 overlay checks, 27 clock checks, 15 election checks, 26 lock checks, 10 end-to-end scenarios</td></tr>
       </table>
     </div>
   </div>
@@ -415,6 +418,236 @@
   </div>
 </section>
 
+<!-- ====================== Milestone 4 ====================== -->
+<section id="milestone-4" class="ms">
+  <div class="wrap">
+    <div class="ms-head">
+      <div>
+        <div class="kicker">Milestone 4</div>
+        <h2>Coordination</h2>
+        <p>The lot servers now agree on three things without a shared clock: the order of events, who the leader is, and who may write to a resource they all share. Every message carries a Lamport timestamp. The lots elect a leader with the Bully algorithm, and the leader hands out one lock for the overflow garage. Kill the leader and the next lot takes over within a few seconds, with the lock state rebuilt.</p>
+      </div>
+      <div class="links">
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/coord">prototype/coord</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/prototype/comm/clock.py">clock.py</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/prototype/event_order.py">event_order.py</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/prototype/mutex_race.py">mutex_race.py</a> &nbsp;
+        <a href="https://github.com/forgehk/cecs327-smart-parking/tree/main/prototype/tests">tests</a>
+      </div>
+    </div>
+
+    <div class="m4req">
+      <div class="card"><span class="n">1</span><h3>Logical clocks</h3><p>Every process keeps a Lamport clock, and every message carries it in the envelope.</p><code>comm/clock.py</code></div>
+      <div class="card"><span class="n">2</span><h3>Event ordering</h3><p>All logs merge into one timeline, sorted by Lamport time and then by process name.</p><code>event_order.py</code></div>
+      <div class="card"><span class="n">3</span><h3>Leader election</h3><p>Bully algorithm. The running lot with the highest id is the leader.</p><code>coord/election.py</code></div>
+      <div class="card"><span class="n">4</span><h3>Mutual exclusion</h3><p>Centralized. The leader grants one lock, in the order of the request timestamps.</p><code>coord/mutex.py</code></div>
+      <div class="card"><span class="n">5</span><h3>Shared resource</h3><p>The overflow garage: five spaces in one table that every lot server reads and writes.</p><code>overflow.py</code></div>
+    </div>
+
+    <div class="card m4sim">
+      <div class="m4-main">
+        <div class="card-head"><h3>Coordination simulator</h3><span class="r" id="m4head">leader D, 4 lots running</span></div>
+        <div class="card-sub">Same rules as <code>comm/clock.py</code>, <code>coord/election.py</code> and <code>coord/mutex.py</code>. The number under each lot is its Lamport clock. Click a lot to crash it, click a stopped lot to start it.</div>
+        <div class="m4scene"><svg id="coord" viewBox="0 0 900 478" role="img" aria-label="Lot servers A to E, their Lamport clocks, the leader and the shared overflow garage"></svg></div>
+        <div class="m3legend">
+          <span><i style="background:#c4b5fd"></i>election</span>
+          <span><i style="background:#fcd34d"></i>coordinator</span>
+          <span><i style="background:#93c5fd"></i>lock request</span>
+          <span><i style="background:#34d399"></i>grant, answer</span>
+          <span><i style="background:#f472b6"></i>release</span>
+          <span><i style="background:#67e8f9"></i>state query</span>
+          <span><i style="background:#fb923c"></i>table read, write</span>
+          <span><i style="background:#ef4444"></i>no answer</span>
+        </div>
+      </div>
+      <div class="m4-side">
+        <div class="m3group">
+          <div class="m3label">Logical clocks</div>
+          <div class="m3row">
+            <label class="m3sel">from <select id="m4from"></select></label>
+            <label class="m3sel">to <select id="m4to"></select></label>
+          </div>
+          <div class="m3row">
+            <button data-m4="send">Send a message</button>
+            <button data-m4="sendfar">Sender far ahead</button>
+          </div>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Leader election</div>
+          <div class="m3row">
+            <button class="danger" data-m4="crash">Crash the leader</button>
+            <button data-m4="restart">Restart crashed lots</button>
+            <button data-m4="elect">Lowest lot starts an election</button>
+          </div>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Mutual exclusion</div>
+          <div class="m3row">
+            <button data-m4="racebad">Race without the lock</button>
+            <button class="primary" data-m4="racegood">Race with the lock</button>
+            <button class="danger" data-m4="racekill">Crash the coordinator mid race</button>
+          </div>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Live state</div>
+          <table class="m3metrics" id="m4state"></table>
+        </div>
+        <div class="m3group">
+          <div class="m3label">Last race</div>
+          <div id="m4race"></div>
+        </div>
+        <div class="m3row">
+          <span class="chips" id="m4speed"><span class="chip" data-s="0.5">slow</span><span class="chip on" data-s="1">normal</span><span class="chip" data-s="2">fast</span></span>
+          <button class="ghost sm" data-m4="reset" style="margin-left:auto">Reset</button>
+        </div>
+      </div>
+      <div class="m4-log">
+        <div class="m4row"><div class="m3label">Space-time diagram</div><span class="m4hint">one lane per lot, time runs to the right, numbers are Lamport times, lines are messages</span></div>
+        <div class="m4tlwrap">
+          <div class="m4lanes"><span>A</span><span>B</span><span>C</span><span>D</span><span>E</span></div>
+          <div class="m4tlscroll"><svg id="m4tl"></svg></div>
+        </div>
+        <div class="vtabs" id="m4logtabs">
+          <button data-v="console" class="on">Console</button>
+          <button data-v="ordered">Merged log in Lamport order</button>
+        </div>
+        <div class="olog m4pane on" id="m4console" data-v="console"></div>
+        <div class="olog m4pane" id="m4ordered" data-v="ordered"></div>
+      </div>
+    </div>
+
+    <div class="grid-m2">
+      <div class="card">
+        <div class="card-head"><h3>Two clock rules</h3></div>
+        <div class="card-sub">Wall clocks on different machines drift, so they cannot order events between processes. One counter per process can.</div>
+        <div class="rules">
+          <div class="rule"><span>send, or any local event</span><code>C = C + 1</code><em>the message carries C in <code>lamport</code></em></div>
+          <div class="rule"><span>receive</span><code>C = max(C, C<sub>msg</sub>) + 1</code><em>applied before the message is handled</em></div>
+        </div>
+        <div class="chain">
+          <div class="hop"><b>client_alice</b><span>send REQUEST reserve A-03</span><code>L=1</code></div>
+          <div class="hop"><b>lot_server_A</b><span>receive, max(546, 1) + 1</span><code>L=547</code></div>
+          <div class="hop"><b>lot_server_A</b><span>send REPLY, 547 + 1</span><code>L=548</code></div>
+          <div class="hop"><b>client_alice</b><span>receive, max(1, 548) + 1</span><code>L=549</code></div>
+        </div>
+        <div class="card-foot">From a real run. Alice's client had just started, so its clock was at 1. Lot A had already counted 546 events. The reply pulls the client's clock up to 549, so on both sides the reply is later than the request. Two events with the same time are ordered by process name, which gives one total order over every log.</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Measured on the prototype</h3><span class="r"><a href="https://github.com/forgehk/cecs327-smart-parking/blob/main/prototype/tests/run_tests.py">scenarios 9 and 10</a></span></div>
+        <div class="card-sub">Four lots started by <code>run_demo.sh</code>. Lot D has the highest id, so it leads.</div>
+        <table class="plain">
+          <tr><th>what</th><th>result</th></tr>
+          <tr><td>leader killed</td><td>lot C was coordinator 1 s after <code>kill -9</code> on D; the budget is about 3 s (a ping every 2 s, 1 s timeout)</td></tr>
+          <tr><td>old leader returns</td><td>D restarts, wins its own start-up election, and C steps down</td></tr>
+          <tr><td>race, no lock</td><td>6 drivers were all told O-01; the table kept 1 of them, 5 lost updates</td></tr>
+          <tr><td>race, with lock</td><td>5 different spaces, 1 driver told the garage is full, table versions 1 to 5</td></tr>
+          <tr><td>coordinator killed mid race</td><td>8 drivers, no conflict; C rebuilt holder A and the queue, then went on</td></tr>
+          <tr><td>queue order</td><td>by request timestamp, then lot id: B (ts=963) arrived after A (ts=985) and was served first</td></tr>
+          <tr><td>cost of one entry</td><td>2 messages when the lock is free, 3 when the request has to wait</td></tr>
+          <tr><td>clock check</td><td>1019 receives after their send, 326 replies after their request, 0 violations</td></tr>
+          <tr><td>tests</td><td>27 clock checks, 15 election checks, 26 lock checks, 2 new end-to-end scenarios</td></tr>
+        </table>
+      </div>
+    </div>
+
+    <div class="card viewer" style="margin-top:14px">
+      <div class="viewer-main">
+        <div class="vtabs" id="m4tabs">
+          <button data-v="crash" class="on">Leader crash</button>
+          <button data-v="nolock">Race without the lock</button>
+          <button data-v="lock">Race with the lock</button>
+          <button data-v="kill">Coordinator crash mid race</button>
+          <button data-v="order">Events in order</button>
+          <button data-v="msgs">Message types</button>
+        </div>
+        <div class="vpane4 on" data-v="crash"><pre class="trace" id="m4trace-crash"></pre></div>
+        <div class="vpane4" data-v="nolock"><pre class="trace" id="m4trace-nolock"></pre></div>
+        <div class="vpane4" data-v="lock"><pre class="trace" id="m4trace-lock"></pre></div>
+        <div class="vpane4" data-v="kill"><pre class="trace" id="m4trace-kill"></pre></div>
+        <div class="vpane4" data-v="order"><pre class="trace" id="m4trace-order"></pre></div>
+        <div class="vpane4" data-v="msgs">
+          <div class="types">
+            <div class="type"><b>lamport</b><span class="pat">envelope field</span><p>the sender's Lamport clock; on every message of every milestone</p></div>
+            <div class="type"><b>ELECTION</b><span class="pat">election</span><p>sent to every lot with a higher id; a live one answers OK and takes over</p></div>
+            <div class="type"><b>COORDINATOR</b><span class="pat">election</span><p>the winner tells every lot; a lot switches leader first, then sends its ACK</p></div>
+            <div class="type"><b>LEADER_PING</b><span class="pat">failure detection</span><p>every follower, every 2 s; no ACK within 1 s starts an election</p></div>
+            <div class="type"><b>MUTEX_REQUEST</b><span class="pat">lock</span><p>resource, request id and Lamport timestamp; the ACK says granted or queued</p></div>
+            <div class="type"><b>MUTEX_GRANT</b><span class="pat">lock</span><p>leader to the next lot in the queue; refused unless it comes from the current leader</p></div>
+            <div class="type"><b>MUTEX_RELEASE</b><span class="pat">lock</span><p>the holder is done; the leader grants the next in line</p></div>
+            <div class="type"><b>MUTEX_STATE</b><span class="pat">recovery</span><p>a new leader asks every lot what it holds and what it waits for</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="viewer-side">
+        <div class="vtext4 on" data-v="crash">
+          <h3>Kill the leader, then bring it back</h3>
+          <p>Console lines from the real system. Lot C's ping to D gets no answer, so C starts an election. Nobody higher answers, so C announces itself and lots A and B switch.</p>
+          <p style="margin-top:8px">When D restarts it runs an election of its own, wins because its id is the highest, and C steps down.</p>
+        </div>
+        <div class="vtext4" data-v="nolock">
+          <h3>The conflict</h3>
+          <p>Assigning a space is read, pick the first free one, write. The read and the write are 0.3 s apart. Six requests through three lot servers all read an empty table, all pick O-01, and overwrite each other.</p>
+        </div>
+        <div class="vtext4" data-v="lock">
+          <h3>One writer at a time</h3>
+          <p>The same race with the lock. Each lot server asks the leader first and only touches the table while it holds the lock. Five drivers get five different spaces and the sixth is told the garage is full.</p>
+          <p style="margin-top:8px">The coordinator's queue is sorted by the timestamp each request was made with.</p>
+        </div>
+        <div class="vtext4" data-v="kill">
+          <h3>The coordinator dies holding the queue</h3>
+          <p>Lot D is killed 0.6 s into a race. Its queue is gone with it. The new leader asks every lot for its lock state before it grants anything, so it learns that A is still inside and C is waiting.</p>
+          <p style="margin-top:8px">Still five different spaces for five drivers.</p>
+        </div>
+        <div class="vtext4" data-v="order">
+          <h3>One timeline from many logs</h3>
+          <p><code>event_order.py</code> merges the log of every process and sorts by Lamport time. The wall clock column is not always in order, the Lamport column is.</p>
+          <p style="margin-top:8px"><code>--check</code> verifies that every receive is later than its send and every reply later than its request.</p>
+        </div>
+        <div class="vtext4" data-v="msgs">
+          <h3>Seven new message types, one new field</h3>
+          <p>They use the same envelope and the lot server's normal port. ELECTION, COORDINATOR, LEADER_PING and the lock messages are answered with an ACK on the same connection.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-m2">
+      <div class="card">
+        <div class="card-head"><h3>Why Bully</h3></div>
+        <table class="plain cmp4">
+          <tr><th></th><th>messages</th><th>needs</th><th>for our lots</th></tr>
+          <tr><td>Bully (ours)</td><td>N &minus; 1 at best, about N<sup>2</sup> at worst</td><td>every lot knows every id</td><td>the ids are the lot letters; a dead lot simply does not answer, and a restarted lot with the highest id takes over again</td></tr>
+          <tr><td>ring</td><td>about 2N</td><td>a ring order, and a way to skip a dead neighbor</td><td>fewer messages, but one more structure to keep repaired next to the Milestone 3 mesh</td></tr>
+        </table>
+        <div class="card-foot">With five lots the worst case is 10 ELECTION messages and 4 COORDINATOR messages, so the extra messages of Bully do not matter here.</div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Why a centralized lock</h3></div>
+        <table class="plain cmp4">
+          <tr><th></th><th>messages per entry</th><th>if a process crashes</th></tr>
+          <tr><td>centralized (ours)</td><td>2 or 3</td><td>coordinator: elect a new one and rebuild the queue. Holder: the lock is taken back after 10 s</td></tr>
+          <tr><td>Ricart-Agrawala</td><td>2(N &minus; 1)</td><td>every lot has to answer, so one crashed lot blocks everybody until it is detected</td></tr>
+          <tr><td>token ring</td><td>1 to N &minus; 1</td><td>a lost token has to be detected and made again; the token circulates even when nobody wants the garage</td></tr>
+        </table>
+        <div class="card-foot">The usual weakness of the centralized algorithm is the coordinator. We already elect a leader, so the coordinator is replaceable.</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <div class="card-head"><h3>What can go wrong, and what happens</h3></div>
+      <table class="plain fail4">
+        <tr><th>case</th><th>what the system does</th><th>checked in</th></tr>
+        <tr><td>the leader crashes</td><td>a follower's LEADER_PING gets no answer, it starts an election, and the highest running lot becomes coordinator</td><td><code>test_election.py</code>, scenario 9</td></tr>
+        <tr><td>the leader crashes while a lot holds the lock</td><td>the new leader asks every lot with MUTEX_STATE, rebuilds the holder and the queue, and grants the next lot only after the holder releases</td><td><code>test_mutex.py</code>, scenario 10</td></tr>
+        <tr><td>the old leader comes back</td><td>it starts an election when it starts, wins, and the stand-in steps down</td><td><code>test_election.py</code>, scenario 9</td></tr>
+        <tr><td>the lot holding the lock crashes</td><td>the coordinator takes the lock back after 10 s and grants the next in line</td><td><code>test_mutex.py</code></td></tr>
+        <tr><td>several lots start an election at once</td><td>all of them run; there is still exactly one leader at the end</td><td><code>test_election.py</code></td></tr>
+        <tr><td>a replaced coordinator sends a late grant</td><td>refused; a lot accepts a grant only from the lot it currently follows, so there is never a second holder</td><td><code>test_mutex.py</code></td></tr>
+        <tr><td>a request arrives late with an earlier timestamp</td><td>it goes ahead of later requests that arrived first</td><td><code>test_mutex.py</code></td></tr>
+      </table>
+    </div>
+  </div>
+</section>
+
 <footer>
   CECS 327, Distributed Smart Parking. <a href="https://github.com/forgehk/cecs327-smart-parking">GitHub</a>
 </footer>
@@ -429,5 +662,6 @@
 <script src="js/main.js"></script>
 <script src="js/m2.js"></script>
 <script src="js/m3.js"></script>
+<script src="js/m4.js"></script>
 </body>
 </html>
