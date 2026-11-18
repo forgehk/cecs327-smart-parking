@@ -92,6 +92,88 @@ The browser demo in `web/` is the Milestone 1 version of the system (direct
 connections, no broker or registry). It is still useful for showing the lot state and
 the failure cases visually; the Milestone 2 and 3 pages on the site are diagrams.
 
+## Coordination (Milestone 4)
+
+### Logical clocks
+
+Every process keeps a Lamport clock (`prototype/comm/clock.py`). Sending is an event:
+`C = C + 1` and the message goes out with `"lamport": C` in its envelope. Receiving
+merges: `C = max(C, lamport in message) + 1`. So a reply always has a later time than
+its request, and an EVENT a later time than the PUBLISH that caused it, even when
+wall clocks disagree.
+
+- the send rule runs in `envelope.make()` (and `envelope.stamp()` for a retry), so
+  every message in the system carries a Lamport time
+- the receive rule runs in `MessageLog.record("recv", ...)`: every receive is logged
+  right after `recv_msg()` and before it is handled
+- every log line has the process's Lamport time for that event, and the lot server
+  and client consoles print it as `L=` next to the wall clock
+- a lot server that crashes continues its clock from the last time in its own log
+
+`python event_order.py` merges every log into one timeline sorted by
+`(lamport, process)`; `python event_order.py --check` verifies that every receive comes
+after its send and every reply after its request.
+
+### Leader election (Bully)
+
+The lot servers elect one leader, the coordinator (`prototype/coord/election.py`).
+Every lot in `LOT_PORTS` may exist and the highest live one wins: E > D > C > B > A.
+
+- `ELECTION` goes to every higher lot. A live one answers OK and runs its own election.
+  If nobody higher answers within 1 s, the sender wins.
+- The winner sends `COORDINATOR` to everyone. A lower lot claiming to be the leader is
+  answered with a new election.
+- Every follower sends `LEADER_PING` to the leader every 2 s. No answer within 1 s means
+  the leader failed, and the follower starts an election. A dead leader is replaced in
+  about 3 s.
+- A lot server starts an election when it starts, so a restarted lot with the highest
+  id takes the leadership back ("bully").
+
+```
+python3 client.py --lot B leader     # who B believes the leader is, and its election counters
+python3 client.py --lot A elect      # make A start an election now
+```
+
+### Shared resource and mutual exclusion
+
+**The resource.** The campus overflow garage, spaces O-01 to O-05
+(`prototype/overflow.py`). No lot owns it: any lot server may give a driver an overflow
+space when its own lot is full, so every lot server reads and writes one shared table
+(`prototype/shared/overflow.json`, standing in for a shared campus database).
+
+**The conflict.** Assigning a space means reading the table, picking the first free
+space, and writing it back. The read and the write are 0.3 s apart (a slow shared
+database). If several drivers ask at the same time through different lot servers, every
+lot server reads the same free space, gives it to its own driver and writes it back.
+The last write wins, so several drivers are told O-01 but the table keeps only one of
+them. The spaces of a single lot never have this problem, because each one has a
+single writer (Milestone 1).
+
+**The algorithm.** Centralized mutual exclusion with the elected leader as coordinator
+(`prototype/coord/mutex.py`):
+
+- a lot server sends `MUTEX_REQUEST` with a Lamport timestamp `ts` to the leader. It is
+  granted at once if nobody holds the lock and nobody waits; otherwise it joins a queue
+  ordered by `(ts, lot)`, so requests are served in Lamport order, not arrival order
+- the holder runs the assignment (the critical section), then sends `MUTEX_RELEASE`,
+  and the leader sends `MUTEX_GRANT` to the next in line
+- **if the leader crashes**, the others elect a new one. Before it grants anything, the
+  new leader asks every lot server `MUTEX_STATE` (what it holds, what it waits for, with
+  the original `ts`) and rebuilds the holder and the queue. It asks only after every live
+  lot has switched to it, and a lot server refuses a grant from anyone but its current
+  leader, so an old leader can't create a second holder
+- **if a holder crashes**, the leader takes the lock back after 10 s and grants the next
+
+```
+python3 client.py --id alice overflow            # a space in the overflow garage, through lot A
+python3 client.py --id alice overflow release
+python3 client.py overflow status                # the shared table
+python3 mutex_race.py                            # 6 drivers through A, B, C at once: no conflict
+python3 mutex_race.py --no-lock                  # the same without the lock: everyone told O-01
+python3 mutex_race.py --drivers 8 --kill-leader 0.6   # crash the coordinator mid-race: still no conflict
+python3 client.py --lot A leader                 # also shows the lock holder and queue at the coordinator
+```
+
 ## Requirements
 
 - Python 3.9 or newer (standard library only, nothing to `pip install`)
@@ -163,6 +245,9 @@ python3 client.py --lot D lookup B --no-cache --fresh   # D floods the overlay, 
 python3 client.py --lot C peers                  # C's neighbors, replicas, counters
 python3 client.py total                          # free spaces over every lot, by convergecast
 python3 p2p_metrics.py                           # degree, edges, diameter, lookup hops, traffic
+python3 event_order.py --no-info --last 30       # the last 30 messages of all processes, in Lamport order
+python3 event_order.py --types REQUEST,REPLY --grep A-03   # one space's requests and replies, in order
+python3 event_order.py --check                   # every receive after its send, every reply after its request
 ```
 
 ## Running the demo
@@ -202,7 +287,10 @@ cd prototype
 python3 tests/test_framing.py     # framing + envelope, no network, < 1 s
 python3 tests/test_comm.py        # the three patterns in-process over real sockets, ~5 s
 python3 tests/test_p2p.py         # the overlay: five peers in-process over real sockets, ~15 s
-python3 tests/run_tests.py        # whole system, eight scenarios, about 2 minutes
+python3 tests/test_clock.py       # Lamport clocks: the rules, stamps, causal chains over real sockets, ~2 s
+python3 tests/test_election.py    # Bully election: four nodes over real sockets, crashes and restarts, ~15 s
+python3 tests/test_mutex.py       # mutual exclusion and the overflow table, with coordinator and holder crashes, ~30 s
+python3 tests/run_tests.py        # whole system, ten scenarios, about 4 minutes
 python3 tests/run_tests.py 5 8    # just the overlay scenarios
 ```
 
@@ -222,6 +310,24 @@ stops at the neighbors), convergecast (every lot counted once, N-1 replies), gra
 leave, crash detected by ping, repair counter, a new peer receiving the table, random
 sampling refilling short lists, old replicas kept and aging.
 
+`test_clock.py`: the two update rules (tick, `max + 1`), concurrent sends get unique
+stamps, restore after a crash never goes back, every envelope stamped per process, a
+retry and a cached reply re-stamped, X -> Y -> Z causal chain where a far-ahead clock
+pulls the others forward, and `event_order.py --check` on the resulting logs.
+
+`test_election.py`: four nodes start and agree on D; ELECTION only goes upward and D
+never sends one; D crashes and a failed LEADER_PING leads to C; D restarts and bullies
+back (C steps down); D and C crash together and B wins; A alone elects itself; four
+simultaneous elections still end with one leader; the clock condition holds on all of it.
+
+`test_mutex.py`: grant at once, queue, release hands it to the next; 3 nodes x 4
+threads x 3 rounds never have two inside at once; the overflow table double-books
+without the lock and gives 5 different spaces with it (versions 1 to 5); a request that
+arrives later with a smaller Lamport time is served first; the coordinator crashes while
+A holds and B waits, and the new coordinator rebuilds exactly that and grants B only after
+A releases; a crashed holder loses the lock after the hold limit; a grant from a node
+that is not the coordinator is refused; the clock condition holds.
+
 `run_tests.py` scenarios:
 
 | # | Scenario | Checks |
@@ -234,6 +340,8 @@ sampling refilling short lists, old replicas kept and aging.
 | 6 | broker crash | kill the broker: sensors can't publish, Lot A goes all `unknown`, but request-reply still works; restart the broker: lot server re-SUBSCRIBEs, sensor republishes, lot recovers |
 | 7 | status watch | a `client.py watch A` process receives the reserved/free EVENTs the lot server publishes; broker log has one send line per delivery |
 | 8 | join / leave trace | four lots up with 2 to 3 neighbors each and three replicas each; D's owner-only lookup for B takes 2 hops; `total` from A covers all four; E joins through C, receives the table, has 2 neighbors; C leaves gracefully and every neighbor drops it at once; D crashes and is removed by ping; A, B, E are still one connected mesh; `total` now covers exactly A, B, E |
+| 9 | leader election | A, B, C agree on C; `kill -9` C: A and B notice the failed LEADER_PING and agree on B within a few seconds; restart C: it takes the leadership back and B logs `LEADER B -> C`; a forced election from A still ends with C; `event_order.py --check` holds |
+| 10 | mutual exclusion | C leads; `mutex_race.py --no-lock` through A, B, C double-books (CONFLICT, LOST UPDATE); the same race with the lock gives 5 different spaces and 1 'full' and the table agrees; C's console shows the queue; `--kill-leader 0.6` crashes C mid-race, B rebuilds the lock state from MUTEX_STATE and the race still has no conflict; `event_order.py --check` holds |
 
 Process output from the run is in `tests/out/`. Logs and output from our runs are in
 `docs/sample_logs/` (M1), `docs/sample_logs_m2/` (M2) and `docs/sample_logs_m3/` (M3).
@@ -262,12 +370,20 @@ prototype/
   comm/
     framing.py              length-prefixed JSON over TCP
     envelope.py             the common message fields
+    clock.py                Lamport clocks (one per process)
     request_reply.py        call() and Service
     pubsub.py               Broker, Subscriber, Publisher
     group.py                Registry, join/leave/members, group_send
   p2p/
     overlay.py              Peer: neighbors, join/leave, ping repair, gossip, lookup, convergecast
+  coord/
+    wire.py                 one message to one node (or many in parallel), ACK on the same connection
+    election.py             Bully leader election and leader failure detection
+    mutex.py                centralized mutual exclusion, the leader coordinates
   p2p_metrics.py            graph metrics from a live overlay
+  event_order.py            all logs merged in Lamport order, clock-condition check
+  overflow.py               the shared resource: the overflow garage table
+  mutex_race.py             simultaneous overflow requests, with or without the lock
   registry.py               the registry process
   broker.py                 the broker process
   lot_server.py
@@ -278,6 +394,9 @@ prototype/
     test_framing.py         unit tests, no network
     test_comm.py            the three patterns over real sockets
     test_p2p.py             the overlay over real sockets
+    test_clock.py           Lamport clocks over real sockets
+    test_election.py        Bully election over real sockets
+    test_mutex.py           mutual exclusion and the overflow table over real sockets
     run_tests.py            whole-system scenarios
 web/                        Milestone 1 browser demo
   index.html, style.css
