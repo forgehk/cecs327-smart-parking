@@ -11,6 +11,8 @@ import os
 import threading
 import time
 
+from comm.clock import clock_for
+
 LOG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs")
 
 # timing (seconds) - small values so a demo doesn't take forever
@@ -43,6 +45,20 @@ P2P_LOOKUP_TTL = 3           # flood depth for a pull lookup
 P2P_LOOKUP_TIMEOUT = 2.0     # how long the asker waits for a FOUND
 P2P_REPLICA_STALE = 4 * P2P_GOSSIP_INTERVAL   # a cached remote summary older than this is flagged stale
 
+# coordination (Milestone 4)
+ELECTION_ANSWER_TIMEOUT = 1.0     # how long to wait for a higher node to answer ELECTION
+COORDINATOR_TIMEOUT = 3.0         # after a higher node answered: wait this long for its COORDINATOR
+LEADER_CHECK_INTERVAL = 2.0       # how often a follower pings the leader
+LEADER_PING_TIMEOUT = 1.0         # no answer within this -> the leader is considered dead
+MUTEX_WAIT = 15.0                 # a lot server gives up waiting for the lock after this
+MUTEX_RETRY = 0.5                 # while waiting: re-check who the coordinator is this often
+MUTEX_HOLD_LIMIT = 10.0           # a holder that hasn't released after this is presumed crashed
+
+# the shared resource: the campus overflow garage, written by every lot server
+OVERFLOW_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shared", "overflow.json")
+OVERFLOW_SPACES = 5               # O-01 .. O-05
+OVERFLOW_WORK_TIME = 0.3          # time between reading and writing the table (a slow shared database)
+
 # topics and groups
 def sensor_topic(lot):
     return "lot/%s/sensor" % lot
@@ -62,17 +78,31 @@ def ts_str(t):
 
 
 class MessageLog:
-    """Append-only log file for one process."""
+    """Append-only log file for one process.
+
+    Each line also carries the process's Lamport time for that event (Milestone 4):
+    a send logs the stamp the message went out with, a receive applies the
+    receive rule here (every receive is logged before it is handled, see
+    comm/clock.py) and logs the result, an info line logs the current value."""
 
     def __init__(self, process_name):
         os.makedirs(LOG_DIR, exist_ok=True)
         self.process = process_name
         self.path = os.path.join(LOG_DIR, process_name + ".log")
+        self.clock = clock_for(process_name)
         self._lock = threading.Lock()
+
+    def _lamport(self, direction, msg):
+        if direction == "recv" and isinstance(msg, dict):
+            return self.clock.receive(msg.get("lamport"))
+        if direction == "send" and isinstance(msg, dict) and "lamport" in msg:
+            return msg["lamport"]
+        return self.clock.now()
 
     def record(self, direction, peer, msg):
         entry = {
             "ts": round(now(), 3),
+            "lamport": self._lamport(direction, msg),
             "process": self.process,
             "dir": direction,      # "send", "recv", "dropped" or "info"
             "peer": peer,
